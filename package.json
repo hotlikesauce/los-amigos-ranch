@@ -1,0 +1,11 @@
+{
+  "name": "los-amigos-ranch-map",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Los Amigos Ranch infrastructure & water systems web map",
+  "scripts": {
+    "build:data": "python scripts/build_data.py",
+    "dev": "python -m http.server 8080 --directory public",
+    "start": "python -m http.server 8080 --directory public"
+  }
+}

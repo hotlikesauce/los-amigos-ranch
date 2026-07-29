@@ -1,0 +1,505 @@
+{
+ "title": "Los Amigos Ranch",
+ "subtitle": "Infrastructure & Water Systems Inventory",
+ "categories": [
+  "Water Infrastructure",
+  "Water Lines",
+  "Utilities",
+  "Ranch Features",
+  "Hunting & Livestock",
+  "Transportation & Boundaries",
+  "Survey Photos"
+ ],
+ "layers": [
+  {
+   "id": "water_wells",
+   "title": "Water Wells",
+   "category": "Water Infrastructure",
+   "geometry": "point",
+   "count": 2,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "water_pumps",
+   "title": "Water Pumps",
+   "category": "Water Infrastructure",
+   "geometry": "point",
+   "count": 0,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "meters",
+   "title": "Meters",
+   "category": "Water Infrastructure",
+   "geometry": "point",
+   "count": 2,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "manifolds",
+   "title": "Manifolds",
+   "category": "Water Infrastructure",
+   "geometry": "point",
+   "count": 5,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "risers",
+   "title": "Risers",
+   "category": "Water Infrastructure",
+   "geometry": "point",
+   "count": 10,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "transfer_points",
+   "title": "Transfer Points",
+   "category": "Water Infrastructure",
+   "geometry": "point",
+   "count": 2,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "valves",
+   "title": "Valves",
+   "category": "Water Infrastructure",
+   "geometry": "point",
+   "count": 15,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "cutoffs",
+   "title": "Cut-Offs / Valve Boxes",
+   "category": "Water Infrastructure",
+   "geometry": "point",
+   "count": 32,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "irrigation_pivots",
+   "title": "Irrigation Pivots",
+   "category": "Water Infrastructure",
+   "geometry": "point",
+   "count": 2,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "yancey_water",
+   "title": "Yancey Water Line",
+   "category": "Water Lines",
+   "geometry": "line",
+   "count": 26,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "ranch_water",
+   "title": "Ranch Water Line",
+   "category": "Water Lines",
+   "geometry": "line",
+   "count": 18,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "lake_irrigation_water",
+   "title": "Lake Irrigation Line",
+   "category": "Water Lines",
+   "geometry": "line",
+   "count": 15,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "buried_electric",
+   "title": "Buried Electric",
+   "category": "Utilities",
+   "geometry": "line",
+   "count": 9,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "fiber",
+   "title": "Fiber",
+   "category": "Utilities",
+   "geometry": "line",
+   "count": 3,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "electric_boxes",
+   "title": "Electric Boxes",
+   "category": "Utilities",
+   "geometry": "point",
+   "count": 3,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "ranch_sites",
+   "title": "Ranch Sites & Buildings",
+   "category": "Ranch Features",
+   "geometry": "point",
+   "count": 14,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "lakes",
+   "title": "Lakes & Tanks",
+   "category": "Ranch Features",
+   "geometry": "point",
+   "count": 5,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "blinds",
+   "title": "Blinds",
+   "category": "Hunting & Livestock",
+   "geometry": "point",
+   "count": 14,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "feeders",
+   "title": "Feeders",
+   "category": "Hunting & Livestock",
+   "geometry": "point",
+   "count": 12,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "cattle_troughs",
+   "title": "Cattle Troughs",
+   "category": "Hunting & Livestock",
+   "geometry": "point",
+   "count": 8,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "cattle_guards",
+   "title": "Cattle Guards",
+   "category": "Hunting & Livestock",
+   "geometry": "point",
+   "count": 16,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "roads",
+   "title": "Roads",
+   "category": "Transportation & Boundaries",
+   "geometry": "line",
+   "count": 66,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "fences",
+   "title": "Fences",
+   "category": "Transportation & Boundaries",
+   "geometry": "line",
+   "count": 21,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "fence_posts",
+   "title": "Fence Posts",
+   "category": "Transportation & Boundaries",
+   "geometry": "point",
+   "count": 59,
+   "label_field": "name",
+   "popup_fields": [
+    "Name",
+    "Notes",
+    "System",
+    "Type",
+    "TypeString",
+    "Length_ft",
+    "CreationDa",
+    "Source"
+   ]
+  },
+  {
+   "id": "photos",
+   "title": "Survey Photos",
+   "category": "Survey Photos",
+   "geometry": "point",
+   "count": 27,
+   "label_field": "name",
+   "popup_fields": [
+    "Date",
+    "Geotag",
+    "Placemark"
+   ]
+  }
+ ],
+ "imagery": [
+  {
+   "file": "Layer25.png",
+   "name": "m_2909955_nw_14_060_20180602.tif",
+   "bounds": [
+    [
+     29.17944068114201,
+     -99.25830895423512
+    ],
+    [
+     29.25800674150571,
+     -99.17924804181797
+    ]
+   ]
+  },
+  {
+   "file": "Layer26.png",
+   "name": "m_2909955_sw_14_060_20180602.tif",
+   "bounds": [
+    [
+     29.11694625901882,
+     -99.25835003953148
+    ],
+    [
+     29.19551354390715,
+     -99.17918865194181
+    ]
+   ]
+  }
+ ],
+ "center": [
+  29.178289,
+  -99.218216
+ ],
+ "bounds": [
+  [
+   29.162818,
+   -99.22729
+  ],
+  [
+   29.193759,
+   -99.209142
+  ]
+ ],
+ "zoom": 14
+}

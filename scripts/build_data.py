@@ -1,0 +1,879 @@
+#!/usr/bin/env python3
+"""Los Amigos Ranch web map -- data build.
+
+Turns the raw survey deliverables in Data/ into the static payload the map
+reads at runtime (public/data/*.geojson, layers.json, search_index.json,
+photos.json) plus web-sized copies of the 2022 survey photos.
+
+Sources, and why each one is used:
+  * "Los Amigos Ranch Updated Feb23.kmz"  - newest water-infrastructure survey.
+    Authoritative for geometry, and the only source carrying the Fiber layer.
+  * "Los Amigos Ranch Updated _Post Review.kmz" - the same survey a revision
+    earlier, but it carries ~30 <img> links tying photos to specific
+    placemarks, and a handful of features that never made it into Feb23.
+    Used for photo association + as a source of extra features.
+  * "LosAmigos_2017_Infrastructure.kmz" - ranch base data (roads, fences,
+    buildings, hunting/livestock features, lake labels).
+  * "2022 Survey/Electric_Box.shp" - 3 electric boxes; the only shapefile
+    layer with records that no KMZ exposes.
+  * "LosAmigos_Data_35Percent_42x.kmz" - 2018 NAIP aerial as two KML
+    GroundOverlays, re-emitted as PNG + bounds for L.imageOverlay.
+
+Photo geotagging uses two independent signals: the KML <img> links (exact --
+the survey crew attached each photo to a placemark) and EXIF GPS (present on
+the 5 full-resolution originals). Every photo lands via one or the other.
+"""
+from __future__ import annotations
+
+import html
+import json
+import math
+import os
+import re
+import shutil
+import sys
+import zipfile
+from pathlib import Path
+from xml.etree import ElementTree as ET
+
+from PIL import Image
+
+try:
+    import shapefile  # pyshp
+except ImportError:
+    shapefile = None
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "Data"
+SURVEY = DATA / "2022 Survey"
+OUT = ROOT / "public"
+OUT_DATA = OUT / "data"
+OUT_PHOTOS = OUT / "photos"
+OUT_IMAGERY = OUT / "imagery"
+
+K = "{http://www.opengis.net/kml/2.2}"
+
+KMZ_FEB23 = SURVEY / "Los Amigos Ranch Updated Feb23.kmz"
+KMZ_POST = SURVEY / "Los Amigos Ranch Updated _Post Review.kmz"
+KMZ_2017 = DATA / "LosAmigos_2017_Infrastructure.kmz"
+KMZ_AERIAL = DATA / "LosAmigos_Data_35Percent_42x.kmz"
+
+# Every KMZ is scanned for photo<->placemark links, not just the two above:
+# older revisions sometimes carry a link the newer ones dropped.
+ALL_KMZ = sorted(DATA.rglob("*.kmz"))
+
+
+# --------------------------------------------------------------- KML reading
+def read_kml(path: Path):
+    """Parse a KMZ's doc.kml. ArcGIS writes xsi:schemaLocation on <Document>
+    without ever declaring the xsi prefix, which is a hard XML parse error --
+    inject the declaration before handing it to ElementTree."""
+    z = zipfile.ZipFile(path)
+    name = next(n for n in z.namelist() if n.lower().endswith(".kml"))
+    raw = z.read(name).decode("utf-8", "replace")
+    raw = re.sub(r"(<Document[^>]*?)(\sxsi:)",
+                 r'\1 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"\2', raw)
+    root = ET.fromstring(raw)
+    doc = root.find(K + "Document")
+    return (doc if doc is not None else root), z
+
+
+def desc_fields(desc: str) -> dict:
+    """Attributes out of the ArcGIS-generated description table. Only rows with
+    exactly two cells are real key/value pairs -- the single-cell rows are the
+    table's title banner and would otherwise show up as bogus field names."""
+    out = {}
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", desc, re.S | re.I):
+        tds = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S | re.I)
+        if len(tds) != 2:
+            continue
+        k = html.unescape(re.sub(r"<[^>]+>", "", tds[0])).strip()
+        v = html.unescape(re.sub(r"<[^>]+>", "", tds[1])).strip()
+        if k and k.lower() not in ("shape",):
+            out[k] = v
+    return out
+
+
+def ext_fields(pm) -> dict:
+    out = {}
+    for sd in pm.iter(K + "SimpleData"):
+        out[sd.get("name")] = (sd.text or "").strip()
+    for d in pm.iter(K + "Data"):
+        out[d.get("name")] = (d.findtext(K + "value") or "").strip()
+    return out
+
+
+def coords_of(el):
+    """[(lon,lat), ...] for the first geometry under el, dropping altitude."""
+    node = el.find(".//" + K + "coordinates")
+    if node is None or not node.text:
+        return []
+    pts = []
+    for tok in node.text.split():
+        parts = tok.split(",")
+        if len(parts) >= 2:
+            try:
+                pts.append((float(parts[0]), float(parts[1])))
+            except ValueError:
+                pass
+    return pts
+
+
+def geom_of(pm):
+    if pm.find(".//" + K + "Point") is not None:
+        pts = coords_of(pm)
+        return {"type": "Point", "coordinates": list(pts[0])} if pts else None
+    if pm.find(".//" + K + "LineString") is not None:
+        pts = coords_of(pm)
+        return {"type": "LineString", "coordinates": [list(p) for p in pts]} if len(pts) > 1 else None
+    if pm.find(".//" + K + "Polygon") is not None:
+        pts = coords_of(pm)
+        return {"type": "Polygon", "coordinates": [[list(p) for p in pts]]} if len(pts) > 2 else None
+    return None
+
+
+def parse_kmz(path: Path):
+    """{folder name: [ {geom, props, photos, name} ]} for one KMZ."""
+    doc, _ = read_kml(path)
+    layers: dict[str, list] = {}
+
+    def walk(el):
+        for folder in el.findall(K + "Folder"):
+            fname = (folder.findtext(K + "name") or "?").strip()
+            for pm in folder.findall(K + "Placemark"):
+                geom = geom_of(pm)
+                if geom is None:
+                    continue
+                desc = pm.findtext(K + "description") or ""
+                props = desc_fields(desc)
+                props.update({k: v for k, v in ext_fields(pm).items() if v})
+                photos = [s.split("/")[-1] for s in
+                          re.findall(r'<img[^>]+src="([^"]+)"', desc, re.I)]
+                layers.setdefault(fname, []).append({
+                    "geom": geom,
+                    "props": props,
+                    "photos": photos,
+                    "kml_name": (pm.findtext(K + "name") or "").strip(),
+                })
+            walk(folder)
+
+    walk(doc)
+    return layers
+
+
+# ------------------------------------------------------------------ geometry
+def meters_between(a, b):
+    """Equirectangular approximation -- plenty exact at ranch scale."""
+    lon1, lat1 = a
+    lon2, lat2 = b
+    mlat = math.radians((lat1 + lat2) / 2)
+    dx = math.radians(lon2 - lon1) * math.cos(mlat) * 6371000
+    dy = math.radians(lat2 - lat1) * 6371000
+    return math.hypot(dx, dy)
+
+
+def rep_point(geom):
+    """A single representative coordinate for any geometry (for search/dedupe)."""
+    c = geom["coordinates"]
+    if geom["type"] == "Point":
+        return tuple(c)
+    if geom["type"] == "LineString":
+        return tuple(c[len(c) // 2])
+    if geom["type"] == "Polygon":
+        ring = c[0]
+        return (sum(p[0] for p in ring) / len(ring), sum(p[1] for p in ring) / len(ring))
+    return (0.0, 0.0)
+
+
+def line_length_m(coords):
+    return sum(meters_between(coords[i - 1], coords[i]) for i in range(1, len(coords)))
+
+
+def _label(f):
+    return (f["props"].get("Name") or f["props"].get("Notes") or "").strip().lower()
+
+
+def _similar_length(a, b):
+    if a["geom"]["type"] != "LineString":
+        return True
+    la = line_length_m(a["geom"]["coordinates"])
+    lb = line_length_m(b["geom"]["coordinates"])
+    return abs(la - lb) <= max(10.0, 0.15 * max(la, lb))
+
+
+def same_feature(a, b):
+    """Whether two features from DIFFERENT source revisions are the same asset.
+
+    Measured against the actual data: of the features Post Review shares with
+    Feb23, almost all sit at 0.00 m (byte-identical geometry), while the
+    genuinely new ones are 85-400 m away. The only real ambiguity is a handful
+    of re-digitized features 4-10 m off, and every one of those carries the
+    SAME captured name as its Feb23 twin. So two rules, both narrow:
+
+      1. geometry is effectively identical (<= 1.5 m), or
+      2. both carry the same non-empty name and are within 30 m.
+
+    Deliberately NOT a plain distance threshold: real assets cluster tightly
+    (several cut-offs sit within a few metres on one manifold), so anything
+    looser starts merging distinct valves. Never applied within a single
+    source, where every record is by definition its own asset.
+    """
+    if a["geom"]["type"] != b["geom"]["type"]:
+        return False
+    d = meters_between(rep_point(a["geom"]), rep_point(b["geom"]))
+    na, nb = _label(a), _label(b)
+    if na and nb and na != nb:
+        # A differing captured name is decisive: "Dove Tank Cutoff" and "Ice
+        # Machine Cutoff" 2 m apart are two assets, not one.
+        return False
+    if d <= 1.5 and _similar_length(a, b):
+        return True
+    if na and na == nb and d <= 30.0 and _similar_length(a, b):
+        return True
+    return False
+
+
+# Web Mercator (the CRS of the survey shapefiles) -> WGS84 lon/lat.
+def webmerc_to_wgs84(x, y):
+    lon = x / 6378137.0 * 180.0 / math.pi
+    lat = (2 * math.atan(math.exp(y / 6378137.0)) - math.pi / 2) * 180.0 / math.pi
+    return (lon, lat)
+
+
+# -------------------------------------------------------------- layer schema
+# id -> how to build it. `src` entries are (kmz key, folder name) pairs; the
+# first source wins on a geometry collision, later ones only contribute
+# features the earlier ones don't already have.
+#   name_fields : props to try, in order, for the feature's display name
+#   name_prefix : fallback label stem, numbered per layer
+#   type_from   : folder name becomes this property (for merged layers)
+FEB, POST, R2017 = "feb23", "post", "r2017"
+
+# Shown in popups as "Source". The two 2022/2023 water-survey revisions
+# disagree slightly about which assets exist, and rather than silently pick a
+# winner the map carries both and says where each feature came from.
+SOURCE_LABEL = {
+    FEB: "Feb 2023 survey",
+    POST: "2022 survey (post-review)",
+    R2017: "2017 ranch infrastructure",
+    "shp": "2022 survey shapefile",
+}
+
+LAYERS = [
+    # ---- Water infrastructure (points) ----
+    dict(id="water_wells", title="Water Wells", category="Water Infrastructure",
+         geometry="point", src=[(FEB, "Water Wells"), (POST, "Water Wells")],
+         name_fields=["Notes", "Name"], name_prefix="Water Well"),
+    dict(id="water_pumps", title="Water Pumps", category="Water Infrastructure",
+         geometry="point", src=[(FEB, "Water Pump"), (POST, "Water Pump")],
+         name_fields=["Notes", "Name"], name_prefix="Water Pump"),
+    dict(id="meters", title="Meters", category="Water Infrastructure",
+         geometry="point", src=[(FEB, "Meter"), (POST, "Meter")],
+         name_fields=["Name", "Notes"], name_prefix="Meter"),
+    dict(id="manifolds", title="Manifolds", category="Water Infrastructure",
+         geometry="point", src=[(FEB, "Manifold"), (POST, "Manifold")],
+         name_fields=["Notes", "Name"], name_prefix="Manifold"),
+    dict(id="risers", title="Risers", category="Water Infrastructure",
+         geometry="point", src=[(FEB, "Riser"), (POST, "Riser")],
+         name_fields=["Notes", "Name"], name_prefix="Riser"),
+    dict(id="transfer_points", title="Transfer Points", category="Water Infrastructure",
+         geometry="point", src=[(FEB, "Transfer Points"), (POST, "Transfer Points")],
+         name_fields=["Notes", "Name"], name_prefix="Transfer Point"),
+    dict(id="valves", title="Valves", category="Water Infrastructure",
+         geometry="point", src=[(FEB, "Valve"), (POST, "Valve")],
+         name_fields=["Name", "Notes"], name_prefix="Valve"),
+    dict(id="cutoffs", title="Cut-Offs / Valve Boxes", category="Water Infrastructure",
+         geometry="point", src=[(FEB, "Cut Off"), (POST, "Cut Off")],
+         name_fields=["Name", "Notes"], name_prefix="Cut-Off"),
+    dict(id="irrigation_pivots", title="Irrigation Pivots", category="Water Infrastructure",
+         geometry="point", src=[(R2017, "Irrigation pivot")],
+         name_fields=[], name_prefix="Irrigation Pivot"),
+
+    # ---- Water lines: the three distinct distribution systems ----
+    dict(id="yancey_water", title="Yancey Water Line", category="Water Lines",
+         geometry="line", src=[(FEB, "Yancey Water"), (POST, "Yancey Water")],
+         name_fields=["Notes"], name_prefix="Yancey Water Line", system="Yancey"),
+    dict(id="ranch_water", title="Ranch Water Line", category="Water Lines",
+         geometry="line", src=[(FEB, "Ranch Water"), (POST, "Ranch Water")],
+         name_fields=["Notes"], name_prefix="Ranch Water Line", system="Ranch Water"),
+    dict(id="lake_irrigation_water", title="Lake Irrigation Line", category="Water Lines",
+         geometry="line", src=[(FEB, "Lake Irrigation Water"), (POST, "Lake Irrigation Water")],
+         name_fields=["Notes"], name_prefix="Lake Irrigation Line", system="Irrigation"),
+
+    # ---- Utilities ----
+    dict(id="buried_electric", title="Buried Electric", category="Utilities",
+         geometry="line", src=[(FEB, "Buried Electric"), (POST, "Buried Electric")],
+         name_fields=["Notes"], name_prefix="Buried Electric"),
+    dict(id="fiber", title="Fiber", category="Utilities",
+         geometry="line", src=[(FEB, "Fiber")],
+         name_fields=["Notes", "Name"], name_prefix="Fiber"),
+    dict(id="electric_boxes", title="Electric Boxes", category="Utilities",
+         geometry="point", src=[("shp:Electric_Box", None)],
+         name_fields=[], name_prefix="Electric Box"),
+
+    # ---- Ranch facilities ----
+    dict(id="ranch_sites", title="Ranch Sites & Buildings", category="Ranch Features",
+         geometry="point", type_from="Type", src=[
+             (R2017, "HQ"), (R2017, "Fort"), (R2017, "Medina Cantina"),
+             (R2017, "Boat house"), (R2017, "Pumphouse"), (R2017, "Restrooms"),
+             (R2017, "Entrance"), (R2017, "Dump"),
+             (R2017, "Shotgun range"), (R2017, "Rifle range")],
+         name_fields=["Name", "SymbolText"], name_prefix=None),
+    dict(id="lakes", title="Lakes & Tanks", category="Ranch Features",
+         geometry="point", src=[(R2017, "LakeLabelPoint")],
+         name_fields=["Name"], name_prefix="Lake"),
+
+    # ---- Hunting & livestock ----
+    dict(id="blinds", title="Blinds", category="Hunting & Livestock",
+         geometry="point", type_from="Type",
+         src=[(R2017, "Deer blind"), (R2017, "Duck blind")],
+         name_fields=["SymbolText", "Name"], name_prefix=None),
+    dict(id="feeders", title="Feeders", category="Hunting & Livestock",
+         geometry="point", type_from="Type",
+         src=[(R2017, "Deer feeder"), (R2017, "Turkey feeder")],
+         name_fields=["SymbolText", "Name"], name_prefix=None),
+    dict(id="cattle_troughs", title="Cattle Troughs", category="Hunting & Livestock",
+         geometry="point", src=[(R2017, "Cattle trough")],
+         name_fields=[], name_prefix="Cattle Trough"),
+    dict(id="cattle_guards", title="Cattle Guards", category="Hunting & Livestock",
+         geometry="point", src=[(R2017, "Cattle guard")],
+         name_fields=["SymbolText"], name_prefix="Cattle Guard"),
+
+    # ---- Transportation & boundaries ----
+    dict(id="roads", title="Roads", category="Transportation & Boundaries",
+         geometry="line", src=[(R2017, "Road")],
+         name_fields=[], name_prefix="Road"),
+    dict(id="fences", title="Fences", category="Transportation & Boundaries",
+         geometry="line", src=[(R2017, "Fence")],
+         name_fields=["TypeString"], name_prefix="Fence"),
+    dict(id="fence_posts", title="Fence Posts", category="Transportation & Boundaries",
+         geometry="point", src=[(R2017, "FencePost")],
+         name_fields=[], name_prefix="Fence Post"),
+]
+
+CATEGORIES = ["Water Infrastructure", "Water Lines", "Utilities",
+              "Ranch Features", "Hunting & Livestock",
+              "Transportation & Boundaries", "Survey Photos"]
+
+# Attributes worth showing in a popup, in display order. Bookkeeping columns
+# from the ArcGIS field-collection schema (Creator/Editor/GlobalID/FID/SHAPE*)
+# are dropped -- they say nothing about the asset itself.
+POPUP_FIELDS = ["Name", "Notes", "System", "Type", "TypeString",
+                "Length_ft", "CreationDa", "Source"]
+DROP_FIELDS = {"Creator", "Editor", "GlobalID", "FID", "Id", "SHAPE",
+               "SHAPE_Length", "SHAPE_Area", "OBJECTID"}
+
+
+# --------------------------------------------------------------------- build
+def clean_props(props: dict) -> dict:
+    out = {}
+    for k, v in props.items():
+        if k in DROP_FIELDS or v in (None, "", "0", "1899-12-30", "12:00:00 AM"):
+            # Pipe_Size is uniformly "0" across the survey (never captured) and
+            # a bare "0" reads as a real measurement in a popup, so it goes too.
+            if not (k == "Class" and v in ("0", "1")):
+                continue
+        out[k] = v
+    return out
+
+
+def load_shapefile_points(name: str):
+    """Point records from Data/2022 Survey/<name>.shp as parse_kmz-shaped dicts."""
+    if shapefile is None:
+        print("  ! pyshp missing, skipping " + name)
+        return []
+    path = SURVEY / (name + ".shp")
+    if not path.exists():
+        return []
+    # These shapefiles are stored in WGS_1984_Web_Mercator_Auxiliary_Sphere
+    # (metres), not lon/lat -- feeding the raw coordinates straight into
+    # GeoJSON puts the features somewhere off the coast of Africa.
+    prj = path.with_suffix(".prj")
+    projected = prj.exists() and "Mercator" in prj.read_text(errors="replace")
+
+    r = shapefile.Reader(str(path))
+    flds = [f[0] for f in r.fields[1:]]
+    feats = []
+    for sr in r.shapeRecords():
+        pts = sr.shape.points
+        if not pts:
+            continue
+        x, y = pts[0][0], pts[0][1]
+        lon, lat = webmerc_to_wgs84(x, y) if projected else (x, y)
+        props = {}
+        for k, v in zip(flds, sr.record):
+            # The esrignss_* columns are GNSS receiver telemetry (accuracy,
+            # device model, fix type) -- not asset attributes. Two of them do
+            # carry the captured lat/long and date, which are worth keeping.
+            if k.startswith("esrignss_l") or k.startswith("esrignss_1"):
+                continue
+            if k == "esrignss_6":
+                props["CreationDa"] = str(v)
+                continue
+            if k.startswith("esrignss") or k.startswith("esrisnsr") or k.startswith("esrigns"):
+                continue
+            props[k] = str(v)
+        feats.append({"geom": {"type": "Point", "coordinates": [lon, lat]},
+                      "props": props, "photos": [], "kml_name": ""})
+    return feats
+
+
+def build_layers(sources: dict):
+    """Merge each layer's sources into one feature list.
+
+    Sources are applied in the order declared. Within a single source every
+    record is kept verbatim -- they are distinct surveyed assets, however close
+    together. Only features arriving from a *later* source are matched against
+    what earlier sources already contributed, so a re-digitized duplicate
+    collapses while a genuine cluster of neighbouring valves survives.
+    """
+    built = {}
+    for cfg in LAYERS:
+        feats = []          # accumulated across sources
+        for si, (skey, folder) in enumerate(cfg["src"]):
+            if skey.startswith("shp:"):
+                incoming = load_shapefile_points(skey[4:])
+            else:
+                incoming = sources.get(skey, {}).get(folder, [])
+            # Only compare against features contributed by earlier sources.
+            prior = list(feats) if si > 0 else []
+            batch = []
+            for f in incoming:
+                dup = next((e for e in prior if same_feature(f, e)), None)
+                if dup is not None:
+                    # Same asset, already in from a higher-priority revision:
+                    # keep that geometry but adopt any photo link and any
+                    # attribute this revision fills in and the winner leaves blank.
+                    for p in f["photos"]:
+                        if p not in dup["photos"]:
+                            dup["photos"].append(p)
+                    for k, v in f["props"].items():
+                        if v and not (dup["props"].get(k) or "").strip():
+                            dup["props"][k] = v
+                    continue
+                g = dict(f)
+                g["props"] = dict(g["props"])
+                if cfg.get("type_from") and folder:
+                    g["props"][cfg["type_from"]] = folder.strip()
+                g["props"]["Source"] = SOURCE_LABEL.get(
+                    "shp" if skey.startswith("shp:") else skey, skey)
+                batch.append(g)
+            feats.extend(batch)
+        built[cfg["id"]] = feats
+        by_src = {}
+        for f in feats:
+            by_src[f["props"].get("Source", "?")] = by_src.get(f["props"].get("Source", "?"), 0) + 1
+        extra = ""
+        if len(by_src) > 1:
+            extra = "  <- " + ", ".join(f"{v} {k}" for k, v in by_src.items())
+        print(f"  {cfg['id']:24s} {len(feats):4d} features{extra}")
+    return built
+
+
+def captured_name(cfg, feat):
+    """The asset's real, surveyed name -- or None if it was never recorded."""
+    for fld in cfg.get("name_fields") or []:
+        v = (feat["props"].get(fld) or "").strip()
+        # The 2017 layers put a bare row number ("1", "2") in the placemark
+        # name, which is not a name -- only accept descriptive values.
+        if v and not v.isdigit():
+            return v
+    kn = (feat.get("kml_name") or "").strip()
+    if kn and not kn.isdigit():
+        return kn
+    return None
+
+
+def name_layer(cfg, feats):
+    """Assign every feature in a layer a display name, in one pass over the layer.
+
+    Most survey points were captured with no Name/Notes at all, so a synthesized
+    label is what makes them findable at all -- a blank name would leave the
+    feature effectively invisible in search. Sequence numbers are only appended
+    when a prefix is actually shared by more than one feature, so a one-off site
+    reads "HQ" rather than "HQ 1".
+
+    Also records where each name came from, as `name_src`:
+      field - surveyed name, always worth drawing on the map
+      type  - the feature's type/category (a real description, e.g. "Boat House")
+      seq   - pure fallback ("Cut-Off 14"); carries no information, so the map
+              does not label these.
+    """
+    # Pass 1: resolve each feature's base label and where it came from.
+    plan = []
+    counts = {}
+    for f in feats:
+        real = captured_name(cfg, f)
+        if real:
+            src, base = "field", real
+        else:
+            src = "seq"
+            base = cfg.get("name_prefix") or cfg["title"]
+            if cfg.get("type_from"):
+                t = (f["props"].get(cfg["type_from"]) or "").strip()
+                if t:
+                    # Folder names arrive sentence-cased ("Boat house", "Duck
+                    # blind"); these become user-facing labels, so title-case
+                    # them -- but only the all-lowercase words, so acronyms the
+                    # source already capitalised survive ("HQ", not "Hq").
+                    base = " ".join(w.capitalize() if w.islower() else w
+                                    for w in t.split())
+                    src = "type"
+        plan.append((src, base))
+        counts[base] = counts.get(base, 0) + 1
+
+    # Pass 2: number any base label shared by more than one feature -- including
+    # surveyed ones. Five risers all captured as "Ranch Water Riser" would
+    # otherwise be indistinguishable in search results, and a search hit is
+    # matched back to its feature by label, so duplicates would all resolve to
+    # whichever one happened to load first.
+    used = {}
+    out = []
+    for (src, base), f in zip(plan, feats):
+        label = base
+        if counts.get(base, 0) > 1:
+            used[base] = used.get(base, 0) + 1
+            label = f"{base} {used[base]}"
+        sysname = (f["props"].get("System") or "").strip()
+        if sysname and src == "seq":
+            label += f" ({sysname})"
+        out.append((label, src))
+    return out
+
+
+# --------------------------------------------------------------------- photos
+def exif_latlon(path: Path):
+    try:
+        ex = Image.open(path).getexif()
+        gps = ex.get_ifd(0x8825)
+        if not gps:
+            return None
+        def dms(v):
+            return float(v[0]) + float(v[1]) / 60 + float(v[2]) / 3600
+        lat, lon = dms(gps.get(2)), dms(gps.get(4))
+        if gps.get(1) == "S":
+            lat = -lat
+        if gps.get(3) in ("W", "w"):
+            lon = -lon
+        return (lon, lat)
+    except Exception:
+        return None
+
+
+def exif_date(path: Path):
+    try:
+        d = Image.open(path).getexif().get(306)
+        if d:
+            return str(d).split(" ")[0].replace(":", "-")
+    except Exception:
+        pass
+    return ""
+
+
+def collect_photo_locations():
+    """{lowercase photo basename: (lon, lat, folder hint, placemark name)}.
+
+    Scans every KMZ for <img> links. Later/duplicate hits don't overwrite an
+    earlier one -- the KMZs are revisions of the same survey and agree to
+    within a couple of metres, so the first hit is as good as any.
+    """
+    located = {}
+    for kmz in ALL_KMZ:
+        try:
+            doc, _ = read_kml(kmz)
+        except Exception:
+            continue
+
+        def walk(el):
+            for folder in el.findall(K + "Folder"):
+                fname = (folder.findtext(K + "name") or "").strip()
+                for pm in folder.findall(K + "Placemark"):
+                    desc = pm.findtext(K + "description") or ""
+                    srcs = re.findall(r'<img[^>]+src="([^"]+)"', desc, re.I)
+                    if not srcs:
+                        continue
+                    pts = coords_of(pm)
+                    if not pts:
+                        continue
+                    lon, lat = pts[0]
+                    for s in srcs:
+                        base = s.split("/")[-1].lower()
+                        located.setdefault(base, (lon, lat, fname,
+                                                  (pm.findtext(K + "name") or "").strip()))
+                walk(folder)
+
+        walk(doc)
+    return located
+
+
+# Renamed copies: the survey folder holds friendly-named duplicates of photos
+# the KMZ references by camera filename. Mapping them lets the friendly-named
+# file inherit the camera file's KML placemark link.
+ALIASES = {
+    "north field cutoff.jpg": "20220726_100349.jpg",
+    "downstream cutoff.jpg": "20220726_100636.jpg",
+    "irr north riser _ raw.jpg": "irr north riser.jpg",
+}
+
+PHOTO_MAX = 1600      # long edge of the web-sized copy
+THUMB_MAX = 320
+
+
+def build_photos(built):
+    """Write web-sized photos + thumbs, geotag them, and attach each one to the
+    nearest infrastructure feature. Returns the photo records."""
+    located = collect_photo_locations()
+    OUT_PHOTOS.mkdir(parents=True, exist_ok=True)
+    (OUT_PHOTOS / "thumb").mkdir(exist_ok=True)
+
+    # Unique source photos (the Images/ subfolder duplicates the parent).
+    srcs = {}
+    for p in sorted(list(SURVEY.glob("*.jpg")) + list(SURVEY.glob("*.JPG"))):
+        srcs.setdefault(p.name.lower(), p)
+
+    # Folder name in the KMZ -> the layer id it became here, so a photo can be
+    # snapped to a feature in the right layer rather than whatever is closest.
+    folder_to_layer = {}
+    for cfg in LAYERS:
+        for skey, folder in cfg["src"]:
+            if folder:
+                folder_to_layer[folder.lower()] = cfg["id"]
+
+    records = []
+    unlocated = []
+    for key, path in sorted(srcs.items()):
+        loc = located.get(key) or located.get(ALIASES.get(key, ""))
+        lon = lat = None
+        hint_folder = hint_name = ""
+        source = ""
+        if loc:
+            lon, lat, hint_folder, hint_name = loc
+            source = "KML placemark link"
+        else:
+            ex = exif_latlon(path)
+            if ex:
+                lon, lat = ex
+                source = "EXIF GPS"
+        if lon is None:
+            unlocated.append(path.name)
+            continue
+
+        slug = re.sub(r"[^a-z0-9]+", "-", path.stem.lower()).strip("-") + ".jpg"
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            w, h = im.size
+            full = im.copy()
+            full.thumbnail((PHOTO_MAX, PHOTO_MAX), Image.LANCZOS)
+            full.save(OUT_PHOTOS / slug, "JPEG", quality=82, optimize=True)
+            th = im.copy()
+            th.thumbnail((THUMB_MAX, THUMB_MAX), Image.LANCZOS)
+            th.save(OUT_PHOTOS / "thumb" / slug, "JPEG", quality=76, optimize=True)
+
+        # Attach the photo to the asset it depicts, for the "photos on this
+        # feature" list in the popup. (The photo also keeps its own coordinates
+        # as a point on the Survey Photos layer.)
+        #
+        # Preference order matters: several cut-offs sit within a metre of each
+        # other, so nearest-point alone can hand a photo to the wrong one. When
+        # the KML names the placemark, an exact name match in the hinted layer
+        # is authoritative and beats proximity.
+        target_layer = folder_to_layer.get(hint_folder.lower())
+        best = None
+        hint_lc = hint_name.strip().lower()
+        if target_layer and hint_lc:
+            for i, f in enumerate(built.get(target_layer) or []):
+                # Compare against every name the feature carries, not just the
+                # Name field: the survey is internally inconsistent (one cut-off
+                # has Name="Upstream Cutoff" but placemark name and
+                # Notes="North Field Cutoff"), and the photo link points at the
+                # placemark name. Matching only Name misattributes that photo to
+                # a different cut-off 1 m away.
+                cands = {(f["props"].get(k) or "").strip().lower()
+                         for k in ("Name", "Notes")}
+                cands.add((f.get("kml_name") or "").strip().lower())
+                if hint_lc in cands - {""}:
+                    best = (meters_between((lon, lat), rep_point(f["geom"])), target_layer, i)
+                    break
+        if best is None:
+            search_ids = [target_layer] if target_layer else list(built.keys())
+            for lid in search_ids:
+                for i, f in enumerate(built.get(lid) or []):
+                    d = meters_between((lon, lat), rep_point(f["geom"]))
+                    if best is None or d < best[0]:
+                        best = (d, lid, i)
+        if best is None or best[0] > 60:
+            best = None
+            for lid, feats in built.items():
+                for i, f in enumerate(feats):
+                    d = meters_between((lon, lat), rep_point(f["geom"]))
+                    if best is None or d < best[0]:
+                        best = (d, lid, i)
+
+        attached = None
+        if best and best[0] <= 60:
+            _, lid, i = best
+            attached = lid
+            lst = built[lid][i].setdefault("photos_web", [])
+            if slug not in lst:
+                lst.append(slug)
+
+        records.append({
+            "file": slug,
+            "title": re.sub(r"\s+", " ", re.sub(r"[_]+", " ", path.stem)).strip(),
+            "lat": round(lat, 7),
+            "lon": round(lon, 7),
+            "width": w,
+            "height": h,
+            "date": exif_date(path),
+            "geotag": source,
+            "placemark": hint_name,
+            "layer": attached or "",
+            "snap_m": round(best[0], 1) if best else None,
+        })
+
+    print(f"  photos: {len(records)} geotagged "
+          f"({sum(1 for r in records if r['geotag'] == 'EXIF GPS')} via EXIF, "
+          f"{sum(1 for r in records if r['geotag'] == 'KML placemark link')} via KML)")
+    if unlocated:
+        print("  ! no location for: " + ", ".join(unlocated))
+    return records
+
+
+# -------------------------------------------------------------------- aerial
+def build_aerial():
+    """Re-emit the KML GroundOverlays as PNG + LatLonBox bounds."""
+    doc, z = read_kml(KMZ_AERIAL)
+    OUT_IMAGERY.mkdir(parents=True, exist_ok=True)
+    out = []
+    for go in doc.iter(K + "GroundOverlay"):
+        href = go.findtext(".//" + K + "href")
+        box = go.find(K + "LatLonBox")
+        if not href or box is None:
+            continue
+        png = href.split("/")[-1]
+        with open(OUT_IMAGERY / png, "wb") as fh:
+            fh.write(z.read(href))
+        out.append({
+            "file": png,
+            "name": go.findtext(K + "name") or png,
+            "bounds": [[float(box.findtext(K + "south")), float(box.findtext(K + "west"))],
+                       [float(box.findtext(K + "north")), float(box.findtext(K + "east"))]],
+        })
+        print(f"  imagery: {png} {out[-1]['bounds']}")
+    return out
+
+
+# --------------------------------------------------------------------- write
+def main():
+    if not KMZ_FEB23.exists():
+        sys.exit("missing " + str(KMZ_FEB23))
+    OUT_DATA.mkdir(parents=True, exist_ok=True)
+
+    print("Reading KMZs...")
+    sources = {FEB: parse_kmz(KMZ_FEB23), POST: parse_kmz(KMZ_POST), R2017: parse_kmz(KMZ_2017)}
+
+    print("Merging layers...")
+    built = build_layers(sources)
+
+    print("Processing photos...")
+    photos = build_photos(built)
+
+    print("Extracting aerial imagery...")
+    aerial = build_aerial()
+
+    print("Writing GeoJSON...")
+    search = []
+    catalog = []
+    for cfg in LAYERS:
+        feats = built[cfg["id"]]
+        names = name_layer(cfg, feats)
+        gj = {"type": "FeatureCollection", "features": []}
+        for (label, name_src), f in zip(names, feats):
+            props = clean_props(f["props"])
+            props["name"] = label
+            props["name_src"] = name_src
+            props["layer"] = cfg["title"]
+            if cfg.get("system"):
+                props.setdefault("System", cfg["system"])
+            if f["geom"]["type"] == "LineString":
+                props["Length_ft"] = str(round(line_length_m(f["geom"]["coordinates"]) * 3.28084))
+            if f.get("photos_web"):
+                props["photos"] = f["photos_web"]
+            gj["features"].append({"type": "Feature", "geometry": f["geom"], "properties": props})
+
+            # Alternate names the asset is also known by. The survey often
+            # records a different label in Notes / the placemark name than in
+            # Name (e.g. "Upstream Cutoff" is also "North Field Cutoff"), so
+            # indexing only the display name would make it unfindable by the
+            # name the crew actually used in the field.
+            alt = []
+            for cand in (f["props"].get("Notes"), f.get("kml_name"),
+                         f["props"].get("Name"), props.get("System"),
+                         props.get("Type"), props.get("TypeString")):
+                cand = (cand or "").strip()
+                if cand and not cand.isdigit() and cand.lower() != label.lower() \
+                        and cand.lower() not in [a.lower() for a in alt]:
+                    alt.append(cand)
+
+            lon, lat = rep_point(f["geom"])
+            search.append({
+                "id": cfg["id"], "label": label, "layer": cfg["title"],
+                "category": cfg["category"], "lat": round(lat, 7), "lon": round(lon, 7),
+                "system": props.get("System", ""),
+                "alt": alt,
+                "photos": len(f.get("photos_web") or []),
+            })
+        (OUT_DATA / f"{cfg['id']}.geojson").write_text(
+            json.dumps(gj, separators=(",", ":")), encoding="utf-8")
+
+        catalog.append({
+            "id": cfg["id"], "title": cfg["title"], "category": cfg["category"],
+            "geometry": cfg["geometry"], "count": len(feats),
+            "label_field": "name",
+            "popup_fields": [k for k in POPUP_FIELDS],
+        })
+
+    # Photos ride along as their own searchable point layer.
+    pgj = {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "geometry": {"type": "Point", "coordinates": [r["lon"], r["lat"]]},
+         "properties": {"name": r["title"], "layer": "Survey Photos", "photos": [r["file"]],
+                        "Date": r["date"], "Geotag": r["geotag"],
+                        "Placemark": r["placemark"]}}
+        for r in photos]}
+    (OUT_DATA / "photos.geojson").write_text(json.dumps(pgj, separators=(",", ":")), encoding="utf-8")
+    catalog.append({"id": "photos", "title": "Survey Photos", "category": "Survey Photos",
+                    "geometry": "point", "count": len(photos), "label_field": "name",
+                    "popup_fields": ["Date", "Geotag", "Placemark"]})
+    for r in photos:
+        search.append({"id": "photos", "label": r["title"], "layer": "Survey Photos",
+                       "category": "Survey Photos", "lat": r["lat"], "lon": r["lon"],
+                       "system": "", "photos": 1})
+
+    (OUT_DATA / "search_index.json").write_text(
+        json.dumps(search, separators=(",", ":")), encoding="utf-8")
+    (OUT_DATA / "photos.json").write_text(
+        json.dumps(photos, indent=1), encoding="utf-8")
+
+    # Map extent from every feature actually built.
+    lats = [s["lat"] for s in search]
+    lons = [s["lon"] for s in search]
+    (OUT / "layers.json").write_text(json.dumps({
+        "title": "Los Amigos Ranch",
+        "subtitle": "Infrastructure & Water Systems Inventory",
+        "categories": CATEGORIES,
+        "layers": catalog,
+        "imagery": aerial,
+        "center": [round((min(lats) + max(lats)) / 2, 6), round((min(lons) + max(lons)) / 2, 6)],
+        "bounds": [[round(min(lats), 6), round(min(lons), 6)],
+                   [round(max(lats), 6), round(max(lons), 6)]],
+        "zoom": 14,
+    }, indent=1), encoding="utf-8")
+
+    total = sum(c["count"] for c in catalog)
+    print(f"\nDone. {len(catalog)} layers, {total} features, {len(photos)} photos.")
+    print(f"Extent: {min(lats):.5f},{min(lons):.5f} -> {max(lats):.5f},{max(lons):.5f}")
+
+
+if __name__ == "__main__":
+    main()
