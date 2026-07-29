@@ -121,7 +121,11 @@ Things worth knowing, since they shape what the map shows:
   into 7 scale buckets and cached per layer.
 - **Mobile** — layers become a slide-over drawer with a tap-to-dismiss backdrop,
   touch targets are enlarged on coarse pointers, popups clamp to the viewport
-  width, and the photo lightbox supports swipe.
+  width, and the photo lightbox supports swipe. Narrow viewports (≤860 px) open
+  on the **aerial** basemap rather than the topo sheet — on a phone the map is
+  usually being read in the field, where imagery orients you better. The
+  basemap is chosen once at load, so rotating the device never overrides a
+  choice the user has made.
 
 ## Deploying
 

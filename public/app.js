@@ -30,9 +30,16 @@
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     { maxZoom: 22, maxNativeZoom: 19, attribution: ESRI_ATTR, crossOrigin: true });
 
+  // Phones open on the aerial, desktops on the topo sheet. On a phone the map is
+  // most often being read in the field against what the user can actually see,
+  // and imagery orients you far better than a topo basemap on a small screen.
+  // Matches the CSS drawer breakpoint. Read once at load: after that the user's
+  // own basemap choice wins, so rotating a phone must not undo it.
+  var IS_NARROW = window.matchMedia("(max-width: 860px)").matches;
+
   var map = L.map("map", {
     center: [29.1783, -99.2182], zoom: 14, minZoom: 11, maxZoom: 22,
-    zoomSnap: 0.5, zoomDelta: 0.5, layers: [topo], zoomControl: true
+    zoomSnap: 0.5, zoomDelta: 0.5, layers: [IS_NARROW ? aerial : topo], zoomControl: true
   });
 
   // z-order panes: ranch imagery < polygons < lines < points < emphasis.
@@ -867,8 +874,16 @@
   }
 
   function initChrome() {
-    document.getElementById("bm-topo").onclick = function () { swapBase(topo, this); };
-    document.getElementById("bm-aerial").onclick = function () { swapBase(aerial, this); };
+    var topoBtn = document.getElementById("bm-topo");
+    var aerialBtn = document.getElementById("bm-aerial");
+    topoBtn.onclick = function () { swapBase(topo, this); };
+    aerialBtn.onclick = function () { swapBase(aerial, this); };
+    // The markup marks Topographic active by default; point the highlight at
+    // whichever basemap the map was actually constructed with.
+    if (IS_NARROW) {
+      topoBtn.classList.remove("active");
+      aerialBtn.classList.add("active");
+    }
     document.getElementById("bm-opacity").addEventListener("input", function () {
       (map.hasLayer(aerial) ? aerial : topo).setOpacity((+this.value) / 100);
     });
