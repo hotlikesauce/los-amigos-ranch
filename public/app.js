@@ -17,15 +17,21 @@
 
   // -------------------------------------------------------------- basemaps
   var ESRI_ATTR = "Tiles &copy; Esri";
+  // maxNativeZoom is the deepest level Esri actually has imagery for HERE, and
+  // it is not the service's advertised maximum. Measured over this ranch,
+  // World_Imagery returns real tiles through z19 and an identical 2.5 KB
+  // "not available" placeholder at z20+. Requesting those made the aerial go
+  // blank past z19; capping native at 19 and letting maxZoom run to 22 upscales
+  // the real tile instead, so zooming in stays useful.
   var topo = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
     { maxZoom: 22, maxNativeZoom: 19, attribution: ESRI_ATTR, crossOrigin: true });
   var aerial = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 22, maxNativeZoom: 21, attribution: ESRI_ATTR, crossOrigin: true });
+    { maxZoom: 22, maxNativeZoom: 19, attribution: ESRI_ATTR, crossOrigin: true });
 
   var map = L.map("map", {
-    center: [29.1783, -99.2182], zoom: 14, minZoom: 11, maxZoom: 21,
+    center: [29.1783, -99.2182], zoom: 14, minZoom: 11, maxZoom: 22,
     zoomSnap: 0.5, zoomDelta: 0.5, layers: [topo], zoomControl: true
   });
 
@@ -48,17 +54,20 @@
     "Irrigation": "#2f9e4f"       // green
   };
 
+  // Base sizes are for the opening extent (~z14.5); everything scales up from
+  // here as you zoom in -- see applyZoomScaling.
   var LAYER_STYLE = {
-    // Water infrastructure (points)
-    water_wells:       { radius: 7, fillColor: "#0b5cab", stroke: "#04294d", weight: 2, shape: "well" },
-    water_pumps:       { radius: 6, fillColor: "#1f7fc4", stroke: "#04294d", weight: 1.5, shape: "square" },
-    meters:            { radius: 6, fillColor: "#6f42c1", stroke: "#2b1a4d", weight: 1.5, shape: "square" },
-    manifolds:         { radius: 7, fillColor: "#d6336c", stroke: "#5c122f", weight: 1.5, shape: "star" },
-    risers:            { radius: 6, fillColor: "#0f9d8f", stroke: "#053b35", weight: 1.5, shape: "triangle" },
-    transfer_points:   { radius: 7, fillColor: "#e8590c", stroke: "#5c2103", weight: 1.5, shape: "star" },
-    valves:            { radius: 5.5, fillColor: "#e03131", stroke: "#4d0f0f", weight: 1.2 },
-    cutoffs:           { radius: 5, fillColor: "#f59f00", stroke: "#5c3c00", weight: 1.2, shape: "diamond" },
-    irrigation_pivots: { radius: 7, fillColor: "#2f9e4f", stroke: "#0d3d1f", weight: 1.5, shape: "square" },
+    // Water infrastructure (points) -- the subject of the map, so these are the
+    // largest symbols on it
+    water_wells:       { radius: 9, fillColor: "#0b5cab", stroke: "#04294d", weight: 2, shape: "well" },
+    water_pumps:       { radius: 8, fillColor: "#1f7fc4", stroke: "#04294d", weight: 1.5, shape: "square" },
+    meters:            { radius: 7.5, fillColor: "#6f42c1", stroke: "#2b1a4d", weight: 1.5, shape: "square" },
+    manifolds:         { radius: 9, fillColor: "#d6336c", stroke: "#5c122f", weight: 1.5, shape: "star" },
+    risers:            { radius: 8, fillColor: "#0f9d8f", stroke: "#053b35", weight: 1.5, shape: "triangle" },
+    transfer_points:   { radius: 9, fillColor: "#e8590c", stroke: "#5c2103", weight: 1.5, shape: "star" },
+    valves:            { radius: 7, fillColor: "#e03131", stroke: "#4d0f0f", weight: 1.4 },
+    cutoffs:           { radius: 7, fillColor: "#f59f00", stroke: "#5c3c00", weight: 1.3, shape: "diamond" },
+    irrigation_pivots: { radius: 8.5, fillColor: "#2f9e4f", stroke: "#0d3d1f", weight: 1.5, shape: "square" },
 
     // Water lines -- weight is the visual hierarchy: mains read boldest
     yancey_water:          { color: SYSTEM_COLOR["Yancey"], weight: 3.2 },
@@ -69,23 +78,23 @@
     buried_electric: { color: "#e8a33d", weight: 2.2, dashArray: "7,4" },
     fiber:           { color: "#9b59b6", weight: 2.2, dashArray: "2,4",
                        fillColor: "#9b59b6", fillOpacity: 0.12 },
-    electric_boxes:  { radius: 5, fillColor: "#e8a33d", stroke: "#5c3c00", weight: 1.2, shape: "square" },
+    electric_boxes:  { radius: 6.5, fillColor: "#e8a33d", stroke: "#5c3c00", weight: 1.3, shape: "square" },
 
     // Ranch context
-    ranch_sites:     { radius: 6, fillColor: "#495057", stroke: "#14181c", weight: 1.5, shape: "square" },
-    lakes:           { radius: 6, fillColor: "#3aa0d6", stroke: "#0b3e5c", weight: 1.2 },
-    blinds:          { radius: 4.5, fillColor: "#7f5539", stroke: "#33200f", weight: 1, shape: "triangle" },
-    feeders:         { radius: 4.5, fillColor: "#b08968", stroke: "#4a3421", weight: 1 },
-    cattle_troughs:  { radius: 4.5, fillColor: "#4c9f9c", stroke: "#123d3c", weight: 1 },
-    cattle_guards:   { radius: 4.5, fillColor: "#868e96", stroke: "#2b3035", weight: 1, shape: "square" },
+    ranch_sites:     { radius: 7.5, fillColor: "#495057", stroke: "#14181c", weight: 1.5, shape: "square" },
+    lakes:           { radius: 7, fillColor: "#3aa0d6", stroke: "#0b3e5c", weight: 1.3 },
+    blinds:          { radius: 6, fillColor: "#7f5539", stroke: "#33200f", weight: 1.1, shape: "triangle" },
+    feeders:         { radius: 5.5, fillColor: "#b08968", stroke: "#4a3421", weight: 1.1 },
+    cattle_troughs:  { radius: 5.5, fillColor: "#4c9f9c", stroke: "#123d3c", weight: 1.1 },
+    cattle_guards:   { radius: 6, fillColor: "#868e96", stroke: "#2b3035", weight: 1.1, shape: "square" },
 
     // Transportation & boundaries
-    roads:       { color: "#a8967a", weight: 2 },
-    fences:      { color: "#7d6b4f", weight: 1.4, dashArray: "5,4" },
-    fence_posts: { radius: 2.6, fillColor: "#7d6b4f", stroke: "#3b3123", weight: 0.8 },
+    roads:       { color: "#a8967a", weight: 2.4 },
+    fences:      { color: "#7d6b4f", weight: 1.6, dashArray: "5,4" },
+    fence_posts: { radius: 3.2, fillColor: "#7d6b4f", stroke: "#3b3123", weight: 0.8 },
 
     // Photos
-    photos: { radius: 8, fillColor: "#ffc300", stroke: "#5c4600", weight: 1.5, shape: "camera" }
+    photos: { radius: 10, fillColor: "#ffc300", stroke: "#5c4600", weight: 1.5, shape: "camera" }
   };
 
   // Layers on at first load: the water inventory this map exists for, plus the
@@ -115,7 +124,10 @@
     lakes:           "map-label lbl-lake",
     blinds:          "map-label lbl-hunt"
   };
-  var LABEL_ZOOM = { infra: 16, site: 14 };
+  // Named infrastructure labels come in just above the opening extent, so they
+  // appear as soon as you start zooming toward an asset rather than only at
+  // very close range.
+  var LABEL_ZOOM = { infra: 15.5, site: 14 };
 
   function styleOf(id) { return LAYER_STYLE[id] || {}; }
   function colorFor(id) {
@@ -233,15 +245,91 @@
 
   function pointToLayer(cfg) {
     var s = styleOf(cfg.id), pane = paneFor(cfg);
-    var icon = makeIcon(s);
+    var hasIcon = !!markerSvg(s);
     return function (feat, latlng) {
-      if (icon) return L.marker(latlng, { icon: icon, pane: pane, keyboard: false });
-      return L.circleMarker(latlng, {
-        radius: s.radius || 5, color: s.stroke || "#0b1017", weight: s.weight || 1,
+      if (hasIcon) {
+        var m = L.marker(latlng, {
+          icon: iconFor(cfg.id, scaleBucket), pane: pane, keyboard: false
+        });
+        m._styleId = cfg.id;      // so applyZoomScaling can re-issue its icon
+        return m;
+      }
+      var base = s.radius || 5;
+      var c = L.circleMarker(latlng, {
+        radius: base * currentScale, color: s.stroke || "#0b1017", weight: s.weight || 1,
         fillColor: s.fillColor || colorFor(cfg.id),
         fillOpacity: s.fillOpacity != null ? s.fillOpacity : 0.95, pane: pane
       });
+      // Remember the unscaled radius so rescaling recomputes from the baseline
+      // instead of compounding on every zoom step.
+      c._baseRadius = base;
+      return c;
     };
+  }
+
+  // ------------------------------------------------ zoom-responsive symbology
+  // Symbols sized for the opening extent become uselessly small relative to the
+  // imagery once you zoom in on a single valve, so glyphs and labels grow with
+  // zoom.
+  //
+  // Marker icons are genuinely rebuilt at the new size rather than CSS-scaled:
+  // a CSS transform would enlarge the drawing but leave the marker element --
+  // and therefore its click target -- at the original size, so a big-looking
+  // valve would still only be clickable in a small patch at its centre. On a map
+  // whose whole purpose is clicking assets to read their photos, that matters.
+  //
+  // Rebuilds are quantised to scale buckets and the icons cached per
+  // layer+bucket, so a zoom step is a few hundred setIcon calls against a
+  // handful of shared L.divIcon instances, not 380 fresh SVG builds.
+  var SIZE_REF_ZOOM = 15;      // scale is 1.0 here
+  var currentScale = 1;
+  var scaleBucket = 1;
+  var iconCache = {};
+
+  function sizeScale(z) {
+    return Math.max(0.85, Math.min(2.3, 1 + (z - SIZE_REF_ZOOM) * 0.24));
+  }
+
+  function iconFor(id, scale) {
+    var key = id + "@" + scale;
+    if (iconCache[key]) return iconCache[key];
+    var s = styleOf(id);
+    var scaled = {};
+    for (var k in s) scaled[k] = s[k];
+    scaled.radius = (s.radius || 6) * scale;
+    // Outlines thicken far more slowly than the glyph, or a zoomed-in symbol
+    // turns into mostly stroke.
+    scaled.weight = (s.weight || 1.4) * Math.min(1.5, scale);
+    iconCache[key] = makeIcon(scaled);
+    return iconCache[key];
+  }
+
+  function applyZoomScaling() {
+    currentScale = sizeScale(map.getZoom());
+    var bucket = Math.round(currentScale / 0.15) * 0.15;
+    bucket = Math.round(bucket * 100) / 100;      // avoid float-noise cache keys
+
+    var el = map.getContainer();
+    // Labels grow more gently than the glyphs -- at full icon scale they would
+    // collide across the whole map.
+    el.style.setProperty("--label-scale", Math.min(1.7, Math.max(1, currentScale)).toFixed(3));
+    // Lift labels clear of the markers that have grown underneath them.
+    el.style.setProperty("--label-lift", Math.round(Math.max(0, currentScale - 1) * 11) + "px");
+
+    var bucketChanged = bucket !== scaleBucket;
+    scaleBucket = bucket;
+
+    Object.keys(state).forEach(function (id) {
+      var s = state[id];
+      if (!s.loaded || !s.subs) return;
+      s.subs.forEach(function (sub) {
+        if (sub._baseRadius && sub.setRadius) {
+          sub.setRadius(sub._baseRadius * currentScale);
+        } else if (bucketChanged && sub._styleId && sub.setIcon) {
+          sub.setIcon(iconFor(sub._styleId, bucket));
+        }
+      });
+    });
   }
 
   // ------------------------------------------------------------------ popups
@@ -344,6 +432,24 @@
       else if (e.key === "ArrowLeft") lb.step(-1);
       else if (e.key === "ArrowRight") lb.step(1);
     });
+    // Swipe between photos on touch devices -- the arrow buttons are small
+    // targets on a phone, and a swipe is what a photo viewer is expected to do.
+    (function () {
+      var x0 = null, y0 = null;
+      lb.el.addEventListener("touchstart", function (e) {
+        if (e.touches.length !== 1) { x0 = null; return; }
+        x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+      }, { passive: true });
+      lb.el.addEventListener("touchend", function (e) {
+        if (x0 === null || !e.changedTouches.length) return;
+        var dx = e.changedTouches[0].clientX - x0;
+        var dy = e.changedTouches[0].clientY - y0;
+        // Horizontal intent only, so a vertical scroll/dismiss gesture doesn't
+        // page the photo.
+        if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) lb.step(dx < 0 ? 1 : -1);
+        x0 = null;
+      }, { passive: true });
+    })();
     // Popup content is rebuilt on every open, so thumbnails are handled by one
     // delegated listener rather than per-element handlers.
     document.addEventListener("click", function (e) {
@@ -412,9 +518,13 @@
       onEachFeature: function (feat, lyr) {
         var props = feat.properties || {};
         subs.push(lyr);
+        // Popup width is clamped to the viewport: a fixed 300px minimum
+        // overflows a narrow phone and pushes the close button off-screen.
         lyr.bindPopup(popupHtml(cfg, props), {
-          offset: [0, -10], minWidth: 300, maxWidth: 400,
-          autoPanPaddingTopLeft: [30, 30], autoPanPaddingBottomRight: [30, 30]
+          offset: [0, -10],
+          minWidth: Math.min(300, window.innerWidth - 80),
+          maxWidth: Math.min(400, window.innerWidth - 40),
+          autoPanPaddingTopLeft: [20, 20], autoPanPaddingBottomRight: [20, 20]
         });
         var lv = props[cfg.label_field];
         if (lv != null && !(lv in byLabel)) byLabel[String(lv)] = lyr;
@@ -465,6 +575,9 @@
       ensureLayer(cfg).then(function (s) {
         if (!map.hasLayer(s.layer)) s.layer.addTo(map);
         applySystemFilter();
+        // A layer switched on while already zoomed in must adopt the current
+        // symbol scale, not the z15 baseline it was built at.
+        applyZoomScaling();
       });
     } else {
       var s = state[cfg.id];
@@ -726,7 +839,7 @@
         if (focused && focused._icon) focused._icon.classList.remove("focus-glow");
         if (lyr._icon) { lyr._icon.classList.add("focus-glow"); focused = lyr; }
       }
-      if (window.innerWidth <= 860) document.getElementById("panel").classList.remove("open");
+      if (window.innerWidth <= 860) closePanel();
     });
   }
 
@@ -759,10 +872,30 @@
     document.getElementById("bm-opacity").addEventListener("input", function () {
       (map.hasLayer(aerial) ? aerial : topo).setOpacity((+this.value) / 100);
     });
+    // Mobile layer drawer: the toggle, its backdrop, and Escape all close it.
+    var panel = document.getElementById("panel");
+    var backdrop = document.getElementById("panel-backdrop");
+    function setPanel(open) {
+      panel.classList.toggle("open", open);
+      backdrop.classList.toggle("open", open);
+    }
     document.getElementById("panel-toggle").onclick = function () {
-      document.getElementById("panel").classList.toggle("open");
+      setPanel(!panel.classList.contains("open"));
     };
+    backdrop.onclick = function () { setPanel(false); };
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && panel.classList.contains("open")) setPanel(false);
+    });
+    // Leaving mobile width with the drawer open would otherwise leave the
+    // backdrop covering the map, since the drawer becomes static again.
+    window.addEventListener("resize", function () {
+      if (window.innerWidth > 860) setPanel(false);
+    });
+    closePanel = function () { setPanel(false); };
   }
+  // Set by initChrome; used by search navigation to get the drawer out of the
+  // way once the user has picked a result.
+  var closePanel = function () {};
 
   function updateLabelZoom() {
     var z = map.getZoom(), el = map.getContainer();
@@ -819,7 +952,8 @@
       initLightbox();
       initChrome();
       updateLabelZoom();
-      map.on("zoomend", updateLabelZoom);
+      applyZoomScaling();
+      map.on("zoomend", function () { updateLabelZoom(); applyZoomScaling(); });
 
       attachMapChrome(map, {
         exportName: "los-amigos-ranch-map",
@@ -833,6 +967,7 @@
       Promise.all(pending.map(function (p) { return p.catch(function () {}); })).then(function () {
         clearTimeout(guard);
         applySystemFilter();
+        applyZoomScaling();
         hideSplash();
       });
     }).catch(function (e) {

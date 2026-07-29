@@ -63,12 +63,15 @@
   }
   .banner-search.has-q .s-clear { display: block; }
   .banner-search .s-clear:hover { color: var(--text); }
-  /* Result dropdown hangs below the header search, over the map. */
+  /* Result dropdown hangs below the header search, over the map.
+     The explicit color is required, not decorative: this list is a DOM
+     descendant of .banner, which sets color:#fff for the header text, so the
+     result labels would inherit white on a white card and be invisible. */
   #results {
     position: absolute; top: calc(100% + 6px); left: 0; right: 0; max-height: 60vh;
     overflow-y: auto; background: var(--card); border: 1px solid var(--border);
     border-radius: 10px; box-shadow: 0 12px 34px rgba(10,35,66,.30); display: none;
-    z-index: 700;
+    z-index: 700; color: var(--text);
   }
   #results.open { display: block; }
   #search-meta {
@@ -91,6 +94,9 @@
     width: var(--panel-w); flex-shrink: 0; background: var(--card);
     border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 500;
   }
+  /* Only ever shown behind the mobile drawer (see the 860px block); kept out of
+     the flex row entirely at desktop width. */
+  #panel-backdrop { display: none; }
   #map { flex: 1; min-width: 0; height: 100%; }
 
   /* ---- Water-system filter: the map's central question is "which system is
@@ -177,16 +183,26 @@
     font-size: 10.5px; color: var(--muted); line-height: 1.5;
   }
 
-  /* ---- Permanent map labels, colored to match each layer ---- */
+  /* ---- Permanent map labels, colored to match each layer ----
+     Sized off --label-scale, which app.js updates on every zoom: a fixed pixel
+     size looks right at the opening extent but shrinks into illegibility
+     relative to the imagery as you zoom in on an asset. */
   .map-label {
     background: transparent !important; border: none !important; box-shadow: none !important;
-    padding: 0 !important; font-weight: 600; font-size: 10.5px; white-space: nowrap;
-    text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff;
+    padding: 0 !important; font-weight: 600; white-space: nowrap;
+    font-size: calc(11.5px * var(--label-scale, 1));
+    text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff, 0 0 4px #fff;
   }
   .map-label:before { display: none; }
-  .lbl-inner { display: inline-block; }
+  /* Leaflet owns the tooltip element's own transform (it positions it), so the
+     zoom lift is applied to this inner span instead -- it keeps the label clear
+     of its marker as the marker glyph grows. */
+  .lbl-inner {
+    display: inline-block;
+    transform: translateY(calc(-1 * var(--label-lift, 0px)));
+  }
   .lbl-water { color: #0b4f8a; }
-  .lbl-site  { color: #141414; font-weight: 700; font-size: 11.5px; }
+  .lbl-site  { color: #141414; font-weight: 700; font-size: calc(12.5px * var(--label-scale, 1)); }
   .lbl-lake  { color: #1f6fd0; font-style: italic; }
   .lbl-hunt  { color: #5b4a2e; }
   /* Labels are dense at ranch scale, so they only appear once zoomed in far
@@ -197,8 +213,14 @@
   .show-site-labels .map-label.lbl-site,
   .show-site-labels .map-label.lbl-lake { display: block; }
 
-  /* custom shape markers (squares, stars, camera pins) -- drop Leaflet's box */
+  /* custom shape markers (squares, stars, camera pins) -- drop Leaflet's box.
+     Glyphs grow with zoom by being rebuilt at a new size in app.js, not by a
+     CSS transform, so the clickable area grows along with the drawing. */
   .shape-marker { background: transparent; border: none; }
+  /* Upscaled aerial should stay smooth rather than turn into hard pixels --
+     the supplied 2018 ranch overlay is only 7.5 m/px, so it is always being
+     enlarged past its native resolution. */
+  .leaflet-pane img.leaflet-image-layer { image-rendering: auto; }
   /* the marker that search/photo navigation is currently focused on */
   .focus-glow { filter: drop-shadow(0 0 5px #ffce00) drop-shadow(0 0 9px #ffce00); }
 
@@ -403,8 +425,65 @@
     }
     #panel.open { transform: translateX(0); }
     .banner-title { font-size: 1rem; }
-    .lb-stage { padding: 44px 12px 8px; }
-    .lb-nav { width: 34px; height: 46px; font-size: 20px; }
+    /* Tapping the map should dismiss the drawer, so it gets a real backdrop
+       rather than leaving the user hunting for the toggle again. */
+    #panel-backdrop {
+      display: none; position: absolute; inset: 0; z-index: 480;
+      background: rgba(8,20,34,.42);
+    }
+    #panel-backdrop.open { display: block; }
+    .lb-stage { padding: 44px 10px 8px; }
+    .lb-nav { width: 38px; height: 52px; font-size: 22px; }
+    .lb-close { width: 38px; height: 38px; }
+
+    /* Touch targets: 34px mouse-sized controls are below the ~44px comfortable
+       tap minimum, and the panel is where all the toggling happens. */
+    .layer-row { padding: 10px 14px; }
+    .layer-row input[type=checkbox] { width: 18px; height: 18px; }
+    .cat-group > .cat-head { padding: 11px 14px; }
+    .cat-head input { width: 18px; height: 18px; }
+    .cat-collapse-btn { width: 30px; height: 30px; }
+    .sysfilter-pill { padding: 8px 14px; font-size: 13px; }
+    .basemap button { padding: 11px 0; font-size: 13px; }
+    .basemap-opacity-slider { height: 26px; }
+    .result { padding: 11px 12px; }
+    #search { padding: 11px 34px 11px 36px; font-size: 15px; }
+    .measure-btn, .coordpin-btn, .export-btn { width: 40px; height: 40px; }
+    .leaflet-touch .leaflet-bar a { width: 40px; height: 40px; line-height: 40px; }
+    /* Results list can't run past the viewport on a short screen. */
+    #results { max-height: 55vh; }
+    /* Popups: the desktop 300px minimum overflows a narrow phone. */
+    .leaflet-popup-content { min-width: 0 !important; }
+    .popup-photo { width: 92px; height: 70px; }
+    /* Bottom-left readouts stack instead of colliding with the attribution. */
+    .coord-box, .scale-box { font-size: 10px; padding: 2px 6px; }
+  }
+
+  /* Very small screens: the panel takes the full width, since 86% of a 360px
+     phone leaves a useless sliver of map behind it. */
+  @media (max-width: 430px) {
+    #panel { width: 100%; max-width: none; }
+    .banner-logo { height: 38px; }
+    .popup-photo { width: 78px; height: 60px; }
+    .lb-nav { width: 34px; height: 46px; }
+  }
+
+  /* Landscape phones are short, not narrow -- reclaim vertical space. */
+  @media (max-height: 480px) and (max-width: 900px) {
+    .banner-row { height: auto; padding: 5px 0; }
+    .banner-logo { height: 32px; }
+    #results { max-height: 48vh; }
+    .lb-bar { padding: 6px 16px 10px; }
+    .lb-stage { padding: 38px 8px 4px; }
+  }
+
+  /* Coarse pointers get the same larger hit areas regardless of viewport width
+     (tablets are wide enough to miss the width breakpoints above). */
+  @media (pointer: coarse) {
+    .layer-row { padding: 10px 14px; }
+    .measure-btn, .coordpin-btn, .export-btn { width: 40px; height: 40px; }
+    .popup-photo { width: 92px; height: 70px; }
+    .sysfilter-pill { padding: 8px 14px; }
   }
 </style>
 
@@ -453,6 +532,7 @@
       </div>
       <div class="panel-foot" id="panel-foot"></div>
     </div>
+    <div id="panel-backdrop"></div>
     <div id="map"></div>
   </div>
 </div>

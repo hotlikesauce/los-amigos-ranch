@@ -80,6 +80,20 @@ Things worth knowing, since they shape what the map shows:
   visible rather than looking like an omission.
 - The survey shapefiles are in **Web Mercator**, not lon/lat; the build
   reprojects them.
+- **The supplied ranch aerial is low resolution.** `LosAmigos_Data_35Percent_42x.kmz`
+  holds two 1024×1017 px PNGs covering 7.7 km each — about **7.5 m/px**, i.e. a
+  1:1 pixel match only at ~zoom 14, blurry beyond it. The filename says as much:
+  it is a 35%-downsampled export, not the source NAIP. The underlying
+  `m_2909955_{nw,sw}_14_060_20180602.tif` NAIP tiles are 0.6 m/px — roughly 12×
+  sharper — so if closer inspection of the 2018 imagery matters, re-export from
+  those GeoTIFFs. In the meantime Esri's aerial basemap (real tiles to z19, ~0.3
+  m/px here) is the sharper option and the ranch overlay is best treated as an
+  "as-surveyed 2018" mid-zoom reference.
+- **Esri basemap depth over this ranch is z19, not the service maximum.**
+  Measured directly: World_Imagery returns real tiles through z19 and an
+  identical 2.5 KB "not available" placeholder at z20+. Both basemaps are capped
+  at `maxNativeZoom: 19` so Leaflet upscales the real tile instead of drawing
+  placeholders; `maxZoom` runs to 22.
 
 ## Map features
 
@@ -100,6 +114,14 @@ Things worth knowing, since they shape what the map shows:
 - **Tools** — measure (ft/mi), drop-a-pin with coordinate copy, live lat/long
   and 1:N scale readouts, and PNG export with title/date/scale bar/north
   arrow/legend composited below the map.
+- **Zoom-responsive symbology** — marker glyphs and labels grow as you zoom in,
+  so symbols sized for the ranch-wide view don't shrink into irrelevance when
+  you're inspecting one valve. Icons are *rebuilt* at each size rather than
+  CSS-scaled, so the click target grows with the drawing; rebuilds are quantised
+  into 7 scale buckets and cached per layer.
+- **Mobile** — layers become a slide-over drawer with a tap-to-dismiss backdrop,
+  touch targets are enlarged on coarse pointers, popups clamp to the viewport
+  width, and the photo lightbox supports swipe.
 
 ## Deploying
 
