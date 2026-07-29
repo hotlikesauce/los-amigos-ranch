@@ -1,11 +1,15 @@
 # Los Amigos Ranch — Infrastructure & Water Systems Map
 
+**Live: https://hotlikesauce.github.io/los-amigos-ranch/**
+
 Static Leaflet web map inventorying the ranch's water infrastructure, utilities,
 roads and ranch features, with the 2022 field-survey photos geotagged and
 browsable in place. Chrome and interaction conventions follow the Jonah
 Operations Map so the two read as one family of internal maps.
 
 Ranch is near Sabinal, TX — approx. 29.163–29.194 N, -99.227 to -99.209 W.
+
+25 layers · 386 features · 27 geotagged photos · no server-side code.
 
 ## Running locally
 
@@ -97,20 +101,41 @@ Things worth knowing, since they shape what the map shows:
   and 1:N scale readouts, and PNG export with title/date/scale bar/north
   arrow/legend composited below the map.
 
-## Deploying to Vercel
+## Deploying
 
-`vercel.json` serves `public/` as static output with long cache lifetimes on
-photos, imagery and vendor assets, and no-cache on `data/` so a data rebuild
-goes live immediately.
+The map is fully client-side, needs no environment variables, and uses only
+relative paths — so it works from a subdirectory (`/los-amigos-ranch/`) or a
+domain root without changes. It fetches Esri basemap tiles from
+`server.arcgisonline.com` at runtime; everything else (Leaflet, html2canvas, all
+data, all photos, all imagery) is served from this project.
+
+**GitHub Pages (current).** `.github/workflows/pages.yml` uploads `public/` as
+the Pages artifact on every push to `main`, so `scripts/` and the repo config
+aren't published alongside the map. Nothing to run by hand — push and it deploys.
+
+**Vercel.** `vercel.json` serves `public/` as static output with long cache
+lifetimes on photos, imagery and vendor assets and no-cache on `data/`, so a
+data rebuild goes live immediately.
 
 ```bash
-vercel        # preview
-vercel --prod
+vercel && vercel --prod
 ```
 
-The map is fully client-side and needs no environment variables. It does fetch
-Esri basemap tiles from `server.arcgisonline.com` at runtime; everything else
-(Leaflet, html2canvas, all data, all photos) is served from this project.
+**AWS S3 + CloudFront.** `aws s3 sync public/ s3://<bucket>/ --delete`, with the
+bucket set to serve `index.html` as the index document. One thing to watch: S3
+serves unknown extensions as `application/octet-stream`, and `.geojson` is
+unknown to it. The map parses JSON by hand rather than trusting `Content-Type`
+(see `fetchJson` in `app.js`) specifically so this doesn't break it — but set
+`--content-type application/geo+json` on the `data/` sync anyway if you want
+correct headers.
+
+### One external dependency worth knowing about
+
+The header and splash logo is hotlinked from Jonah's Azure blob storage
+(`jegisstoreage.blob.core.windows.net`). On a public site it loads only while
+that container stays publicly readable; `onerror` hides the image if it doesn't,
+so the layout degrades cleanly rather than breaking. Copy the PNG into
+`public/vendor/` if you'd rather not depend on it.
 
 ## Layout
 
