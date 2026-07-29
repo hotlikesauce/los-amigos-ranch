@@ -1,14 +1,19 @@
+# NOTE: the leading slashes matter. Git's ignore matching is case-insensitive on
+# Windows (core.ignorecase = true), so an unanchored "Data/" ALSO matches
+# "public/data/" and silently excludes the map's own GeoJSON. Anchor to the repo
+# root so only the top-level folders are ignored.
+
 # Raw survey deliverables (135 MB of redundant KMZ revisions + full-res
 # originals). The map serves the derived, web-sized output in public/ instead;
 # rebuild it with `npm run build:data` against a local copy of Data/.
-Data/
+/Data/
 
 # Reference copy of the internal Jonah Operations Map source, kept locally to
 # match its styling. Contains Entra ID client/tenant IDs and internal API
 # routes -- must not be published.
-examples/
+/examples/
 
-_work/
+/_work/
 node_modules/
 .vercel
 __pycache__/
