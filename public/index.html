@@ -362,24 +362,47 @@
     font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center;
   }
   .iso-badge {
-    background: #e03131; color: #fff; border: 2px solid #fff; border-radius: 50%;
-    font: 700 11px/1 -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #e03131; color: #fff; border: 2.5px solid #fff; border-radius: 50%;
+    font: 800 12px/1 -apple-system, "Segoe UI", Roboto, sans-serif;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 1px 5px rgba(0,0,0,.45);
+    box-shadow: 0 0 0 0 rgba(224,49,49,.6), 0 2px 7px rgba(0,0,0,.5);
+    animation: isoPulse 1.8s ease-out infinite;
   }
+  @keyframes isoPulse {
+    0%   { box-shadow: 0 0 0 0 rgba(224,49,49,.60), 0 2px 7px rgba(0,0,0,.5); }
+    70%  { box-shadow: 0 0 0 13px rgba(224,49,49,0), 0 2px 7px rgba(0,0,0,.5); }
+    100% { box-shadow: 0 0 0 0 rgba(224,49,49,0),   0 2px 7px rgba(0,0,0,.5); }
+  }
+  /* The isolated run: marching ants along the pipe, so the extent of what goes
+     dry reads instantly and is impossible to confuse with the static linework. */
+  .iso-run { stroke-dasharray: 15 9; animation: isoDash .85s linear infinite; }
+  @keyframes isoDash { to { stroke-dashoffset: -24; } }
+  @media (prefers-reduced-motion: reduce) {
+    .iso-badge { animation: none; }
+    .iso-run { animation: none; }
+  }
+  /* Header turns red in isolate mode so the pane matches the map. */
+  #trace-pane.iso .trace-hd { background: linear-gradient(135deg, #7a1414 0%, #e03131 100%); }
 
-  /* popup action buttons (trace / isolate) */
-  .popup-actions { display: flex; gap: 6px; margin-top: 9px; }
+  /* Popup action buttons. Isolate is the loud one: it answers the urgent
+     question ("how do I shut this off?"), and its red ties to the red used for
+     the isolated run and its numbered valves on the map. Trace is the calm,
+     exploratory sibling and steps back to an outline so the two don't compete. */
+  .popup-actions { display: flex; gap: 7px; margin-top: 10px; }
   .popup-actions button {
-    flex: 1; padding: 7px 6px; font-size: 11.5px; font-weight: 600; cursor: pointer;
-    border: 1px solid var(--border); background: #fff; color: var(--navy); border-radius: 6px;
-    display: flex; align-items: center; justify-content: center; gap: 5px;
+    flex: 1; padding: 9px 8px; font-size: 12px; font-weight: 700; cursor: pointer;
+    border: 1.5px solid var(--border); background: #fff; color: var(--navy); border-radius: 7px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
   }
-  .popup-actions button:hover { background: var(--row-hover); border-color: var(--accent); }
-  .popup-actions .primary {
-    background: linear-gradient(135deg, #0a2342 0%, #1a6ab5 100%); color: #fff; border-color: var(--navy);
+  .popup-actions .secondary:hover { background: var(--row-hover); border-color: var(--accent); }
+  .popup-actions .danger {
+    flex: 1.25;
+    background: linear-gradient(135deg, #c92a2a 0%, #f03e3e 100%);
+    color: #fff; border-color: #a51111;
+    box-shadow: 0 2px 8px rgba(201,42,42,.35);
   }
-  .popup-actions .primary:hover { filter: brightness(1.08); }
+  .popup-actions .danger:hover { filter: brightness(1.08); box-shadow: 0 3px 12px rgba(201,42,42,.5); }
+  .popup-actions .danger:active { transform: translateY(1px); }
 
   /* ---- Photo gallery ---- */
   #gallery {

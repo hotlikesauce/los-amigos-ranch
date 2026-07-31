@@ -1,0 +1,20 @@
+{
+ "url": "imagery/naip/{z}/{x}/{y}.jpg",
+ "minZoom": 13,
+ "maxNativeZoom": 18,
+ "bounds": [
+  [
+   29.159318000000003,
+   -99.23079
+  ],
+  [
+   29.197259,
+   -99.205642
+  ]
+ ],
+ "name": "Ranch Aerial - 2018 NAIP (full resolution)",
+ "attribution": "USDA NAIP, 2 June 2018",
+ "resolution_m": 0.6,
+ "tiles": 884,
+ "size_mb": 10.6
+}

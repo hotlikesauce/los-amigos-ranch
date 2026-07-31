@@ -14,6 +14,7 @@
   var state = {};        // layer id -> { cfg, layer, loaded, loading, byLabel, subs }
   var index = [];        // search index
   var photoMeta = {};    // photo filename -> record from photos.json
+  var NAIP = null;       // imagery/naip.json, if the tiles have been built
 
   // -------------------------------------------------------------- basemaps
   var ESRI_ATTR = "Tiles &copy; Esri";
@@ -57,6 +58,9 @@
   // Trace highlight sits UNDER the water lines so it reads as a glow behind the
   // pipe rather than painting over its colour.
   map.createPane("traceGlow");    map.getPane("traceGlow").style.zIndex = 412;
+  // Isolation is painted OVER the pipes (see drawTrace), so it needs a pane
+  // above the water lines rather than the glow pane beneath them.
+  map.createPane("traceTop");     map.getPane("traceTop").style.zIndex = 418;
   map.createPane("waterlines");   map.getPane("waterlines").style.zIndex = 415;
   map.getPane("waterlines").classList.add("water-line-pane");
   map.createPane("points");       map.getPane("points").style.zIndex = 420;
@@ -422,11 +426,11 @@
     if (WATER_LINES[cfg.id] && props.name) {
       actions =
         '<div class="popup-actions">' +
-        '<button type="button" class="primary" data-trace="' + esc(props.name) + '">' +
+        '<button type="button" class="secondary" data-trace="' + esc(props.name) + '">' +
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
         '<path d="M4 7h6l4 10h6"/><circle cx="4" cy="7" r="1.6"/><circle cx="20" cy="17" r="1.6"/></svg>' +
         "Trace system</button>" +
-        '<button type="button" data-isolate="' + esc(props.name) + '">' +
+        '<button type="button" class="danger" data-isolate="' + esc(props.name) + '">' +
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
         '<circle cx="12" cy="12" r="8"/><path d="M12 4v16"/></svg>' +
         "Isolate</button></div>";
@@ -623,25 +627,45 @@
 
   function drawTrace(res) {
     traceLayer.clearLayers();
-    var glow = res.kind === "isolate" ? "#e03131" : "#ffd21f";
+    var iso = res.kind === "isolate";
+
     res.edges.forEach(function (ei) {
       var e = NET.edges[ei];
       var latlngs = e.coords.map(function (c) { return [c[1], c[0]]; });
-      L.polyline(latlngs, {
-        color: glow, weight: 11, opacity: 0.42, lineCap: "round",
-        lineJoin: "round", pane: "traceGlow", interactive: false,
-        dashArray: e.inferred ? "10,8" : null
-      }).addTo(traceLayer);
+      if (iso) {
+        // Isolation answers an urgent question, so it is painted OVER the pipes
+        // rather than glowing behind them: a dark casing, then a bright red
+        // core with marching ants. A soft glow underneath (the trace treatment)
+        // reads as "some context is highlighted"; this reads as "this is dry".
+        L.polyline(latlngs, {
+          color: "#3d0000", weight: 13, opacity: 0.5, lineCap: "round",
+          lineJoin: "round", pane: "traceTop", interactive: false
+        }).addTo(traceLayer);
+        L.polyline(latlngs, {
+          color: "#ff1f1f", weight: 6, opacity: 1, lineCap: "butt",
+          lineJoin: "round", pane: "traceTop", interactive: false,
+          className: e.inferred ? "" : "iso-run",
+          dashArray: e.inferred ? "6,7" : null
+        }).addTo(traceLayer);
+      } else {
+        L.polyline(latlngs, {
+          color: "#ffd21f", weight: 12, opacity: 0.5, lineCap: "round",
+          lineJoin: "round", pane: "traceGlow", interactive: false,
+          dashArray: e.inferred ? "10,8" : null
+        }).addTo(traceLayer);
+      }
     });
+
     // Numbered pins on the isolation valves so the list maps onto the map.
     (res.valves || []).forEach(function (v, i) {
       var n = NET.nodes[v.node];
       L.marker([n.lat, n.lon], {
-        pane: "emphasis", keyboard: false,
+        pane: "emphasis", keyboard: false, zIndexOffset: 1000,
+        title: "Close: " + v.dev.name,
         icon: L.divIcon({
           className: "shape-marker",
-          html: '<div class="iso-badge" style="width:22px;height:22px">' + (i + 1) + "</div>",
-          iconSize: [22, 22], iconAnchor: [11, 11]
+          html: '<div class="iso-badge" style="width:26px;height:26px">' + (i + 1) + "</div>",
+          iconSize: [26, 26], iconAnchor: [13, 13]
         })
       }).addTo(traceLayer);
     });
@@ -741,6 +765,7 @@
       };
     });
     pane.classList.add("open");
+    pane.classList.toggle("iso", res.kind === "isolate");
     traceMode = res.kind;
     drawTrace(res);
     fitTrace(res);
@@ -1054,46 +1079,81 @@
       container.appendChild(group);
     });
 
-    // Ranch aerial (2018 NAIP ground overlays out of the supplied KMZ) is a
-    // reference image, not an inventory layer, so it lives in its own group.
-    if ((CFG.imagery || []).length) {
-      var g = document.createElement("div");
-      g.className = "cat-group";
-      g.innerHTML =
-        '<div class="cat-head"><span class="cat-head-label"><span class="cat-name">Reference Imagery</span></span>' +
-        '<button type="button" class="cat-collapse-btn" aria-label="Collapse group" title="Collapse">' +
-          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
-        "</button></div>";
-      g.querySelector(".cat-collapse-btn").addEventListener("click", function () { g.classList.toggle("collapsed"); });
-      var b = document.createElement("div");
-      b.className = "cat-body";
-      var row = document.createElement("label");
-      row.className = "layer-row";
-      row.innerHTML = '<input type="checkbox"><span class="swatch swatch-polygon" style="background:#6b7d8f"></span>' +
-        '<span class="nm">Ranch Aerial (June 2018)</span>';
-      var overlays = null;
-      row.querySelector("input").addEventListener("change", function () {
-        if (!overlays) {
-          overlays = CFG.imagery.map(function (im) {
-            return L.imageOverlay("imagery/" + im.file, im.bounds,
-              { opacity: 1, pane: "ranchImagery", crossOrigin: true });
+    // Ranch imagery is reference material, not inventory, so it gets its own
+    // group. Two versions are offered: the full-resolution NAIP rebuilt from the
+    // source GeoTIFFs, and the low-res export that came in the supplied KMZ --
+    // kept because it is the imagery the survey itself was drawn against.
+    var overlayDefs = [];
+    if (NAIP) {
+      overlayDefs.push({
+        label: "Ranch Aerial — 2018 NAIP",
+        sub: "0.6 m/px · full resolution",
+        make: function () {
+          return L.tileLayer(NAIP.url, {
+            minZoom: NAIP.minZoom, maxNativeZoom: NAIP.maxNativeZoom, maxZoom: 22,
+            bounds: L.latLngBounds(NAIP.bounds), pane: "ranchImagery",
+            attribution: NAIP.attribution, crossOrigin: true
           });
         }
-        var on = this.checked;
-        overlays.forEach(function (o) { if (on) o.addTo(map); else map.removeLayer(o); });
+      });
+    }
+    if ((CFG.imagery || []).length) {
+      overlayDefs.push({
+        label: "Ranch Aerial — 2018 (KMZ)",
+        sub: "7.5 m/px · as supplied",
+        make: function () {
+          return L.layerGroup(CFG.imagery.map(function (im) {
+            return L.imageOverlay("imagery/" + im.file, im.bounds,
+              { opacity: 1, pane: "ranchImagery", crossOrigin: true });
+          }));
+        }
+      });
+    }
+    if (!overlayDefs.length) return;
+
+    var g = document.createElement("div");
+    g.className = "cat-group";
+    g.innerHTML =
+      '<div class="cat-head"><span class="cat-head-label"><span class="cat-name">Reference Imagery</span></span>' +
+      '<button type="button" class="cat-collapse-btn" aria-label="Collapse group" title="Collapse">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
+      "</button></div>";
+    g.querySelector(".cat-collapse-btn").addEventListener("click", function () { g.classList.toggle("collapsed"); });
+    var b = document.createElement("div");
+    b.className = "cat-body";
+
+    overlayDefs.forEach(function (def) {
+      var row = document.createElement("label");
+      row.className = "layer-row";
+      row.innerHTML = '<input type="checkbox">' +
+        '<span class="swatch swatch-polygon" style="background:#6b7d8f"></span>' +
+        '<span class="nm">' + esc(def.label) +
+        '<small style="display:block;color:var(--muted);font-size:10.5px">' + esc(def.sub) + "</small></span>";
+      var layer = null;
+      row.querySelector("input").addEventListener("change", function () {
+        if (!layer) layer = def.make();          // built on first use, not at boot
+        if (this.checked) layer.addTo(map);
+        else map.removeLayer(layer);
       });
       b.appendChild(row);
+
       var slider = document.createElement("div");
       slider.className = "basemap-opacity-wrap";
-      slider.innerHTML = '<input type="range" class="basemap-opacity-slider" min="0" max="100" value="100" aria-label="Ranch aerial transparency">';
+      slider.innerHTML = '<input type="range" class="basemap-opacity-slider" min="0" max="100" value="100" ' +
+        'aria-label="' + esc(def.label) + ' transparency">';
       slider.querySelector("input").addEventListener("input", function () {
         var v = (+this.value) / 100;
-        if (overlays) overlays.forEach(function (o) { o.setOpacity(v); });
+        if (!layer) return;
+        // A tileLayer sets its own opacity; the KMZ pair is a group of
+        // imageOverlays that each need setting individually.
+        if (layer.setOpacity) layer.setOpacity(v);
+        else layer.eachLayer(function (o) { o.setOpacity(v); });
       });
       b.appendChild(slider);
-      g.appendChild(b);
-      document.getElementById("layers").appendChild(g);
-    }
+    });
+
+    g.appendChild(b);
+    document.getElementById("layers").appendChild(g);
   }
 
   // ------------------------------------------------------------------ search
@@ -1331,7 +1391,9 @@
       '<div class="trace-empty">This line isn\'t connected to the derived pipe network, so there\'s ' +
       "nothing to " + (isIso ? "isolate" : "trace") + " from it.<br><br>The network is built from where " +
       "surveyed line ends meet, and this run's ends don't reach another line.</div>";
-    document.getElementById("trace-pane").classList.add("open");
+    var p = document.getElementById("trace-pane");
+    p.classList.add("open");
+    p.classList.toggle("iso", !!isIso);
     traceLayer.clearLayers();
   }
   // Set by initChrome; used by search navigation to get the drawer out of the
@@ -1365,13 +1427,17 @@
       fetchJson("data/network.json").catch(function (e) {
         console.warn("Pipe network unavailable; trace/isolate disabled.", e);
         return null;
-      })
+      }),
+      // Optional: only present once scripts/build_imagery.py has been run
+      // against the GIS share, so its absence must not break the map.
+      fetchJson("imagery/naip.json").catch(function () { return null; })
     ]).then(function (out) {
       CFG = out[0];
       index = out[1];
       (out[2] || []).forEach(function (p) { photoMeta[p.file] = p; });
       CFG.layers.forEach(function (l) { LAYER_TITLE[l.id] = l.title; });
       if (out[3]) initNetwork(out[3]);
+      NAIP = out[4] || null;
 
       document.title = CFG.title || "Los Amigos Ranch";
       var bt = document.querySelector(".banner-title");

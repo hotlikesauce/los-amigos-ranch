@@ -28,6 +28,27 @@ pip install pillow pyshp
 npm run build:data     # python scripts/build_data.py
 ```
 
+### Rebuilding the aerial imagery (optional, needs the GIS share)
+
+```bash
+pip install rasterio
+npm run build:imagery  # python scripts/build_imagery.py
+```
+
+Reads the source NAIP GeoTIFFs from `S:\North_Rockies\...\Los Amigos\Imagery\`,
+warps them to Web Mercator, mosaics them over the ranch extent and cuts XYZ
+tiles into `public/imagery/naip/` (884 tiles, ~10.6 MB, z13–z18).
+
+Tiles rather than one image on purpose: at native resolution a single overlay
+would be ~23 megapixels, downloaded and decoded in full by every visitor before
+anything appeared. Tiles fetch only what's on screen.
+
+z18 is the deepest level generated because NAIP is 0.600 m/px and Leaflet's z18
+is 0.597 m/px — essentially 1:1. Going further would only upsample and quadruple
+the file count for detail that isn't in the source; Leaflet is given
+`maxNativeZoom: 18` and upscales past it. The map works fine without these
+tiles — `naip.json` is fetched optionally and the toggle simply doesn't appear.
+
 That regenerates everything the map reads, from the raw deliverables in `Data/`:
 
 | Output | Contents |
@@ -81,15 +102,15 @@ Things worth knowing, since they shape what the map shows:
   visible rather than looking like an omission.
 - The survey shapefiles are in **Web Mercator**, not lon/lat; the build
   reprojects them.
-- **The supplied ranch aerial is low resolution.** `LosAmigos_Data_35Percent_42x.kmz`
-  holds two 1024×1017 px PNGs covering 7.7 km each — about **7.5 m/px**, i.e. a
-  1:1 pixel match only at ~zoom 14, blurry beyond it. The filename says as much:
-  it is a 35%-downsampled export, not the source NAIP. The underlying
-  `m_2909955_{nw,sw}_14_060_20180602.tif` NAIP tiles are 0.6 m/px — roughly 12×
-  sharper — so if closer inspection of the 2018 imagery matters, re-export from
-  those GeoTIFFs. In the meantime Esri's aerial basemap (real tiles to z19, ~0.3
-  m/px here) is the sharper option and the ranch overlay is best treated as an
-  "as-surveyed 2018" mid-zoom reference.
+- **The supplied ranch aerial is low resolution — so it was rebuilt.**
+  `LosAmigos_Data_35Percent_42x.kmz` holds two 1024×1017 px PNGs covering 7.7 km
+  each — about **7.5 m/px**, a 1:1 pixel match only at ~zoom 14. The filename
+  says as much: a 35%-downsampled export, not the source NAIP.
+  `scripts/build_imagery.py` re-exports from the original
+  `m_2909955_{nw,sw}_14_060_20180602.tif` quarter-quads on the GIS share
+  (0.6 m/px, NAD83 / UTM 14N, 4-band) — **12× sharper**. Both are offered as
+  separate toggles under Reference Imagery; the KMZ version is kept because it
+  is the imagery the survey itself was drawn against.
 - **The pipe network is derived, not surveyed.** Nothing in the source records
   how the lines connect — `build_network()` infers it from geometry: line ends
   within 4 m are one junction, and a valve or cut-off within 13 m of a line
