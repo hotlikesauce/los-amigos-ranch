@@ -48,6 +48,14 @@
   map.createPane("ranchImagery"); map.getPane("ranchImagery").style.zIndex = 250;
   map.createPane("polys");        map.getPane("polys").style.zIndex = 405;
   map.createPane("lines");        map.getPane("lines").style.zIndex = 410;
+  // Water mains get their own pane above the other linework: they are the
+  // subject of the map, so they should never be crossed out by a ranch road.
+  // The pane also carries a dark halo (see .water-line-pane) that keeps the
+  // bright line colors legible against both the pale topo sheet and the busy
+  // aerial -- the standard casing treatment, done once per pane instead of by
+  // drawing every line twice.
+  map.createPane("waterlines");   map.getPane("waterlines").style.zIndex = 415;
+  map.getPane("waterlines").classList.add("water-line-pane");
   map.createPane("points");       map.getPane("points").style.zIndex = 420;
   map.createPane("emphasis");     map.getPane("emphasis").style.zIndex = 430;
 
@@ -55,10 +63,22 @@
   // Water is the subject of this map, so the three distribution systems get
   // the three most distinct hues and the heaviest line weights; utilities and
   // ranch context recede into ambers, browns and greys.
+  // Same three hues as before, pushed up in saturation so they read as
+  // pipelines rather than basemap furniture -- but each one checked against
+  // BOTH backgrounds it has to survive, since the aerial is now the default on
+  // phones. Contrast ratios vs. pale topo ground / mid aerial vegetation:
+  //
+  //   Yancey      #2b8cf0   2.99 / 2.61     (was #0b5cab: 5.84 / 1.34)
+  //   Ranch Water #06b8c9   2.10 / 3.72     (was #00a3b4: 2.65 / 2.95)
+  //   Irrigation  #25bf50   2.12 / 3.70     (was #2f9e4f: 2.99 / 2.62)
+  //
+  // The old Yancey blue was the real problem: at 1.34 against aerial it was
+  // essentially invisible there. Brighter is not just prettier here. The dark
+  // halo on the waterlines pane carries whichever side of each pair is weaker.
   var SYSTEM_COLOR = {
-    "Yancey": "#0b5cab",          // deep blue
-    "Ranch Water": "#00a3b4",     // teal
-    "Irrigation": "#2f9e4f"       // green
+    "Yancey": "#2b8cf0",          // vivid azure
+    "Ranch Water": "#06b8c9",     // bright turquoise
+    "Irrigation": "#25bf50"       // bright green
   };
 
   // Base sizes are for the opening extent (~z14.5); everything scales up from
@@ -76,10 +96,11 @@
     cutoffs:           { radius: 7, fillColor: "#f59f00", stroke: "#5c3c00", weight: 1.3, shape: "diamond" },
     irrigation_pivots: { radius: 8.5, fillColor: "#2f9e4f", stroke: "#0d3d1f", weight: 1.5, shape: "square" },
 
-    // Water lines -- weight is the visual hierarchy: mains read boldest
-    yancey_water:          { color: SYSTEM_COLOR["Yancey"], weight: 3.2 },
-    ranch_water:           { color: SYSTEM_COLOR["Ranch Water"], weight: 3 },
-    lake_irrigation_water: { color: SYSTEM_COLOR["Irrigation"], weight: 2.8 },
+    // Water lines -- the heaviest linework on the map, drawn in the haloed
+    // waterlines pane above roads and fences
+    yancey_water:          { color: SYSTEM_COLOR["Yancey"], weight: 4.2 },
+    ranch_water:           { color: SYSTEM_COLOR["Ranch Water"], weight: 4 },
+    lake_irrigation_water: { color: SYSTEM_COLOR["Irrigation"], weight: 3.8 },
 
     // Utilities
     buried_electric: { color: "#e8a33d", weight: 2.2, dashArray: "7,4" },
@@ -141,7 +162,11 @@
     var s = styleOf(id);
     return s.fillColor || s.color || "#7d848c";
   }
+  // The three water distribution systems -- drawn in their own haloed pane.
+  var WATER_LINES = { yancey_water: 1, ranch_water: 1, lake_irrigation_water: 1 };
+
   function paneFor(cfg) {
+    if (WATER_LINES[cfg.id]) return "waterlines";
     if (cfg.geometry === "line") return "lines";
     if (cfg.geometry === "polygon") return "polys";
     return EMPHASIS[cfg.id] ? "emphasis" : "points";
@@ -234,8 +259,13 @@
     if (cfg.geometry === "line") {
       // The Fiber layer mixes 2 lines with 1 polygon, so a "line" layer still
       // has to carry fill settings for any polygon feature inside it.
+      // Water mains draw at full opacity with rounded joins; the context
+      // linework stays slightly translucent so it sits back.
+      var isWater = !!WATER_LINES[cfg.id];
       return function () {
-        return { color: s.color || c, weight: s.weight || 2, opacity: 0.92,
+        return { color: s.color || c, weight: s.weight || 2,
+                 opacity: isWater ? 1 : 0.9,
+                 lineCap: "round", lineJoin: "round",
                  dashArray: s.dashArray || null, pane: pane,
                  fillColor: s.fillColor || c,
                  fillOpacity: s.fillOpacity != null ? s.fillOpacity : 0.12 };
@@ -326,6 +356,10 @@
     var bucketChanged = bucket !== scaleBucket;
     scaleBucket = bucket;
 
+    // Lines thicken more gently than point symbols -- a pipeline at full icon
+    // scale would read as a corridor rather than a line.
+    var lineScale = Math.min(1.9, Math.max(0.9, 1 + (currentScale - 1) * 0.7));
+
     Object.keys(state).forEach(function (id) {
       var s = state[id];
       if (!s.loaded || !s.subs) return;
@@ -334,6 +368,8 @@
           sub.setRadius(sub._baseRadius * currentScale);
         } else if (bucketChanged && sub._styleId && sub.setIcon) {
           sub.setIcon(iconFor(sub._styleId, bucket));
+        } else if (bucketChanged && sub._baseWeight && sub.setStyle) {
+          sub.setStyle({ weight: sub._baseWeight * lineScale });
         }
       });
     });
@@ -533,6 +569,11 @@
           maxWidth: Math.min(400, window.innerWidth - 40),
           autoPanPaddingTopLeft: [20, 20], autoPanPaddingBottomRight: [20, 20]
         });
+        // Remember each line's unscaled weight so applyZoomScaling can thicken
+        // it with zoom from the baseline rather than compounding.
+        if (cfg.geometry !== "point" && lyr.options && lyr.options.weight) {
+          lyr._baseWeight = lyr.options.weight;
+        }
         var lv = props[cfg.label_field];
         if (lv != null && !(lv in byLabel)) byLabel[String(lv)] = lyr;
         // Only label features whose name means something: one surveyed in the
