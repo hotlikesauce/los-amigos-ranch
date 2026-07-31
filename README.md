@@ -28,16 +28,31 @@ pip install pillow pyshp
 npm run build:data     # python scripts/build_data.py
 ```
 
-### Rebuilding the aerial imagery (optional, needs the GIS share)
+That regenerates everything the map reads, from the raw deliverables in `Data/`:
+
+| Output | Contents |
+| --- | --- |
+| `public/layers.json` | Layer catalog, categories, map extent |
+| `public/data/*.geojson` | One file per layer (25 layers, 386 features) |
+| `public/data/search_index.json` | Flat searchable index incl. alternate names |
+| `public/data/photos.json` | Photo metadata (coords, date, how it was geotagged) |
+| `public/data/network.json` | Derived pipe graph — junctions, segments, components |
+| `public/photos/`, `photos/thumb/` | Web-sized (1600px) + thumbnail (320px) JPEGs |
+
+### Rebuilding the aerial imagery (separate; needs the GIS share)
 
 ```bash
 pip install rasterio
 npm run build:imagery  # python scripts/build_imagery.py
 ```
 
-Reads the source NAIP GeoTIFFs from `S:\North_Rockies\...\Los Amigos\Imagery\`,
-warps them to Web Mercator, mosaics them over the ranch extent and cuts XYZ
-tiles into `public/imagery/naip/` (884 tiles, ~10.6 MB, z13–z18).
+Reads the source NAIP GeoTIFFs from the GIS share, warps them to Web Mercator,
+mosaics them over the ranch extent and cuts XYZ tiles into
+`public/imagery/naip/` (884 tiles, ~10.6 MB, z13–z18).
+
+Kept separate from `build:data` because it is the one step that needs both the
+S: drive and rasterio/GDAL, and the imagery changes far less often than the
+survey data does.
 
 Tiles rather than one image on purpose: at native resolution a single overlay
 would be ~23 megapixels, downloaded and decoded in full by every visitor before
@@ -49,18 +64,6 @@ the file count for detail that isn't in the source; Leaflet is given
 `maxNativeZoom: 18` and upscales past it. The map works fine without these
 tiles — `naip.json` is fetched optionally and the toggle simply doesn't appear.
 
-That regenerates everything the map reads, from the raw deliverables in `Data/`:
-
-| Output | Contents |
-| --- | --- |
-| `public/layers.json` | Layer catalog, categories, map extent, imagery bounds |
-| `public/data/*.geojson` | One file per layer (25 layers, 386 features) |
-| `public/data/search_index.json` | Flat searchable index incl. alternate names |
-| `public/data/photos.json` | Photo metadata (coords, date, how it was geotagged) |
-| `public/data/network.json` | Derived pipe graph — junctions, segments, components |
-| `public/photos/`, `photos/thumb/` | Web-sized (1600px) + thumbnail (320px) JPEGs |
-| `public/imagery/naip/` | 2018 NAIP aerial XYZ tiles (separate script, see below) |
-
 ## Where the data comes from
 
 | Source | Used for |
@@ -69,7 +72,7 @@ That regenerates everything the map reads, from the raw deliverables in `Data/`:
 | `Los Amigos Ranch Updated _Post Review.kmz` | Same survey, one revision earlier — carries the photo↔placemark links and some features Feb23 dropped |
 | `LosAmigos_2017_Infrastructure.kmz` | Roads, fences, buildings, lakes, hunting & livestock features |
 | `2022 Survey/Electric_Box.shp` | 3 electric boxes — the only shapefile record set no KMZ exposes |
-| `Imagery0 Update\m_2909955_{nw,sw}_*.tif` (GIS share) | June 2018 NAIP aerial, 0.6 m/px |
+| `Imagery/2020 Update/m_2909955_{nw,sw}_14_060_20180602.tif` (GIS share) | June 2018 NAIP aerial, 0.6 m/px |
 | `2022 Survey/*.jpg` | 27 survey photos |
 
 ### Notes on the source data
