@@ -99,7 +99,12 @@
     manifolds:         { radius: 9, fillColor: "#d6336c", stroke: "#5c122f", weight: 1.5, shape: "star" },
     risers:            { radius: 8, fillColor: "#0f9d8f", stroke: "#053b35", weight: 1.5, shape: "triangle" },
     transfer_points:   { radius: 9, fillColor: "#e8590c", stroke: "#5c2103", weight: 1.5, shape: "star" },
-    valves:            { radius: 7, fillColor: "#e03131", stroke: "#4d0f0f", weight: 1.4 },
+    // Valves are coloured by the system they shut off, not by being valves --
+    // knowing which main a valve belongs to is the whole question in the field.
+    // colorBySystem makes pointToLayer read each feature's System; fillColor is
+    // the fallback for the few with none recorded.
+    valves:            { radius: 7, fillColor: "#9aa1a8", stroke: "#20262c", weight: 1.6,
+                         colorBySystem: true },
     cutoffs:           { radius: 7, fillColor: "#f59f00", stroke: "#5c3c00", weight: 1.3, shape: "diamond" },
     irrigation_pivots: { radius: 8.5, fillColor: "#2f9e4f", stroke: "#0d3d1f", weight: 1.5, shape: "square" },
 
@@ -292,16 +297,21 @@
     var hasIcon = !!markerSvg(s);
     return function (feat, latlng) {
       if (hasIcon) {
+        var sys = s.colorBySystem ? (feat.properties || {}).System : null;
         var m = L.marker(latlng, {
-          icon: iconFor(cfg.id, scaleBucket), pane: pane, keyboard: false
+          icon: iconFor(cfg.id, scaleBucket, sys), pane: pane, keyboard: false
         });
         m._styleId = cfg.id;      // so applyZoomScaling can re-issue its icon
+        m._sysKey = sys || null;
         return m;
       }
       var base = s.radius || 5;
+      var sysc = s.colorBySystem
+        ? SYSTEM_COLOR[(feat.properties || {}).System] || s.fillColor
+        : s.fillColor;
       var c = L.circleMarker(latlng, {
         radius: base * currentScale, color: s.stroke || "#0b1017", weight: s.weight || 1,
-        fillColor: s.fillColor || colorFor(cfg.id),
+        fillColor: sysc || colorFor(cfg.id),
         fillOpacity: s.fillOpacity != null ? s.fillOpacity : 0.95, pane: pane
       });
       // Remember the unscaled radius so rescaling recomputes from the baseline
@@ -334,8 +344,8 @@
     return Math.max(0.85, Math.min(2.3, 1 + (z - SIZE_REF_ZOOM) * 0.24));
   }
 
-  function iconFor(id, scale) {
-    var key = id + "@" + scale;
+  function iconFor(id, scale, system) {
+    var key = id + "@" + scale + "@" + (system || "");
     if (iconCache[key]) return iconCache[key];
     var s = styleOf(id);
     var scaled = {};
@@ -344,6 +354,7 @@
     // Outlines thicken far more slowly than the glyph, or a zoomed-in symbol
     // turns into mostly stroke.
     scaled.weight = (s.weight || 1.4) * Math.min(1.5, scale);
+    if (s.colorBySystem && system && SYSTEM_COLOR[system]) scaled.fillColor = SYSTEM_COLOR[system];
     iconCache[key] = makeIcon(scaled);
     return iconCache[key];
   }
@@ -374,7 +385,7 @@
         if (sub._baseRadius && sub.setRadius) {
           sub.setRadius(sub._baseRadius * currentScale);
         } else if (bucketChanged && sub._styleId && sub.setIcon) {
-          sub.setIcon(iconFor(sub._styleId, bucket));
+          sub.setIcon(iconFor(sub._styleId, bucket, sub._sysKey));
         } else if (bucketChanged && sub._baseWeight && sub.setStyle) {
           sub.setStyle({ weight: sub._baseWeight * lineScale });
         }
@@ -526,6 +537,79 @@
       e.preventDefault();
       lb.open(b.getAttribute("data-photo"), (b.getAttribute("data-set") || "").split("|").filter(Boolean));
     });
+  }
+
+  // ------------------------------------------------- stacked-point carousel
+  // Assets genuinely occupy the same spot: a valve inside its valve box, or two
+  // valves capping different systems in one trench. Whichever marker Leaflet
+  // happens to draw on top would otherwise be the only one you could ever open,
+  // silently hiding the rest. So a click gathers every visible point within a
+  // few pixels and, when there's more than one, pages through them.
+  var STACK_PX = 18;
+
+  function pointsNear(latlng) {
+    var origin = map.latLngToContainerPoint(latlng);
+    var hits = [];
+    Object.keys(state).forEach(function (id) {
+      var s = state[id];
+      if (!s.loaded || !s.layer || !map.hasLayer(s.layer)) return;
+      if (s.cfg.geometry !== "point") return;
+      (s.subs || []).forEach(function (sub) {
+        if (!s.layer.hasLayer(sub) || !sub.getLatLng) return;
+        var p = map.latLngToContainerPoint(sub.getLatLng());
+        var d = Math.hypot(p.x - origin.x, p.y - origin.y);
+        if (d <= STACK_PX) hits.push({ cfg: s.cfg, sub: sub, d: d });
+      });
+    });
+    hits.sort(function (a, b) { return a.d - b.d; });
+    return hits;
+  }
+
+  function openStackPopup(hits, latlng) {
+    var i = 0;
+    var el = document.createElement("div");
+    function render() {
+      var h = hits[i];
+      var props = (h.sub.feature && h.sub.feature.properties) || {};
+      el.innerHTML =
+        '<div class="stack-nav">' +
+          '<button type="button" class="stack-prev" title="Previous">&#8249;</button>' +
+          '<span class="stack-count">' + (i + 1) + " of " + hits.length + " here</span>" +
+          '<button type="button" class="stack-next" title="Next">&#8250;</button>' +
+        "</div>" + popupHtml(h.cfg, props);
+      el.querySelector(".stack-prev").onclick = function (ev) {
+        ev.stopPropagation(); i = (i - 1 + hits.length) % hits.length; render();
+      };
+      el.querySelector(".stack-next").onclick = function (ev) {
+        ev.stopPropagation(); i = (i + 1) % hits.length; render();
+      };
+      // Nudge the focus glow onto whichever asset is currently showing.
+      if (focused && focused._icon) focused._icon.classList.remove("focus-glow");
+      if (h.sub._icon) { h.sub._icon.classList.add("focus-glow"); focused = h.sub; }
+    }
+    render();
+    L.popup({
+      offset: [0, -10],
+      minWidth: Math.min(300, window.innerWidth - 80),
+      maxWidth: Math.min(400, window.innerWidth - 40),
+      autoPanPaddingTopLeft: [20, 20], autoPanPaddingBottomRight: [20, 20]
+    }).setLatLng(latlng).setContent(el).openOn(map);
+  }
+
+  // Bound to each point feature, because Leaflet stops a marker click before it
+  // reaches the map -- a map-level handler would never see clicks that land on
+  // a marker, which is exactly the case that matters here.
+  function onPointClick(e) {
+    var hits = pointsNear(e.latlng);
+    if (hits.length < 2) return;          // single point: its own popup is fine
+    // Stop the DOM event, not the Leaflet one: L.DomEvent.stop expects a real
+    // event, and passing the Leaflet wrapper silently does nothing useful.
+    if (e.originalEvent) L.DomEvent.stop(e.originalEvent);
+    // This handler is registered after bindPopup, so Leaflet has already opened
+    // the single-feature popup by now. Closing and reopening happens in one
+    // synchronous tick, so the swap is never painted.
+    map.closePopup();
+    openStackPopup(hits, e.latlng);
   }
 
   // ------------------------------------------------------------ pipe network
@@ -1004,6 +1088,7 @@
         if (cfg.geometry !== "point" && lyr.options && lyr.options.weight) {
           lyr._baseWeight = lyr.options.weight;
         }
+        if (cfg.geometry === "point") lyr.on("click", onPointClick);
         var lv = props[cfg.label_field];
         if (lv != null && !(lv in byLabel)) byLabel[String(lv)] = lyr;
         // Only label features whose name means something: one surveyed in the
@@ -1119,10 +1204,16 @@
         row.className = "layer-row" + (l.count ? "" : " is-empty");
         var shape = swatchShape(l);
         var color = colorFor(l.id);
+        // A layer drawn in per-system colours gets a tri-colour swatch, so the
+        // legend doesn't claim a single colour the map never uses.
+        var swStyle = styleOf(l.id).colorBySystem
+          ? "background:linear-gradient(135deg," + SYSTEM_COLOR["Yancey"] + " 0 33%," +
+            SYSTEM_COLOR["Ranch Water"] + " 33% 66%," + SYSTEM_COLOR["Irrigation"] + " 66% 100%)"
+          : "background:" + color + ";color:" + color;
         row.innerHTML =
           '<input type="checkbox" data-id="' + l.id + '"' +
             (DEFAULT_ON[l.id] && l.count ? " checked" : "") + (l.count ? "" : " disabled") + ">" +
-          '<span class="swatch swatch-' + shape + '" style="background:' + color + ';color:' + color + '"></span>' +
+          '<span class="swatch swatch-' + shape + '" style="' + swStyle + '"></span>' +
           '<span class="nm">' + esc(l.title) + "</span>" +
           '<span class="ct">' + (l.count || 0) + "</span>";
         row.querySelector("input").addEventListener("change", function () {

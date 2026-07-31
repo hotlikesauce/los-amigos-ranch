@@ -22,10 +22,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -40,10 +42,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -58,10 +62,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -76,10 +82,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -94,10 +102,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -112,10 +122,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -124,16 +136,18 @@
    "title": "Valves",
    "category": "Water Infrastructure",
    "geometry": "point",
-   "count": 15,
+   "count": 16,
    "label_field": "name",
    "popup_fields": [
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -148,10 +162,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -166,10 +182,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -184,10 +202,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -202,10 +222,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -220,10 +242,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -238,10 +262,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -256,10 +282,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -274,10 +302,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -292,10 +322,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -310,10 +342,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -328,10 +362,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -346,10 +382,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -364,10 +402,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -382,10 +422,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -400,10 +442,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -418,10 +462,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },
@@ -436,10 +482,12 @@
     "Name",
     "Notes",
     "System",
+    "System_Source",
     "Type",
     "TypeString",
     "Length_ft",
     "CreationDa",
+    "Position_Source",
     "Source"
    ]
   },

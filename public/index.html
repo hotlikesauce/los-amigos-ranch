@@ -264,6 +264,24 @@
   }
   .leaflet-popup-close-button:hover { color: var(--text) !important; }
 
+  /* ---- Stacked-point carousel header ---- */
+  .stack-nav {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    /* extra right padding clears Leaflet's popup close "x", which otherwise
+       sits directly on top of the next button */
+    padding: 7px 34px 7px 8px; background: #eef3f9; border-bottom: 1px solid var(--border);
+  }
+  .stack-nav button {
+    border: 1px solid var(--border); background: #fff; color: var(--navy);
+    width: 26px; height: 24px; border-radius: 5px; cursor: pointer;
+    font-size: 15px; line-height: 1; font-weight: 700; flex: none;
+  }
+  .stack-nav button:hover { background: var(--row-hover); border-color: var(--accent); }
+  .stack-count {
+    font-size: 11px; color: var(--muted); letter-spacing: .3px; font-weight: 600;
+    text-transform: uppercase;
+  }
+
   /* ---- Photos in a popup: thumbnail strip, click to open the lightbox ---- */
   .popup-photos { display: flex; gap: 6px; flex-wrap: wrap; }
   .popup-photo {

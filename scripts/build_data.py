@@ -399,8 +399,8 @@ CATEGORIES = ["Water Infrastructure", "Water Lines", "Utilities",
 # Attributes worth showing in a popup, in display order. Bookkeeping columns
 # from the ArcGIS field-collection schema (Creator/Editor/GlobalID/FID/SHAPE*)
 # are dropped -- they say nothing about the asset itself.
-POPUP_FIELDS = ["Name", "Notes", "System", "Type", "TypeString",
-                "Length_ft", "CreationDa", "Source"]
+POPUP_FIELDS = ["Name", "Notes", "System", "System_Source", "Type", "TypeString",
+                "Length_ft", "CreationDa", "Position_Source", "Source"]
 DROP_FIELDS = {"Creator", "Editor", "GlobalID", "FID", "Id", "SHAPE",
                "SHAPE_Length", "SHAPE_Area", "OBJECTID"}
 
@@ -832,9 +832,38 @@ BRIDGE_M = 15.0
 # "Yancey and Ranch Main Water valves", whose own name says so), in which case it
 # is placed on each and will show up when isolating any of them.
 #
-#   "Valve 8": "Yancey",
-#   "Yancey and Ranch Main Water valves": ["Yancey", "Ranch Water"],
-DEVICE_SYSTEM_OVERRIDES = {}
+# Keys are "<layer id>:<display name>" -- not the bare name, because names are
+# only unique within a layer ("Untitled Placemark" is both a valve and a cut-off,
+# and a bare-name rule would silently hit both).
+#
+# Supplied by the ranch, July 2026, against the 15-valve list.
+DEVICE_SYSTEM_OVERRIDES = {
+    "valves:Valve 2": "Yancey",
+    "valves:Valve 3": "Irrigation",
+    "valves:Valve 4": "Ranch Water",
+    "valves:Valve 5": "Ranch Water",
+    "valves:Valve 6": "Irrigation",
+    "valves:Valve 7": "Ranch Water",
+    "valves:Valve 8": "Yancey",
+    "valves:Valve 9": "Ranch Water",
+    "valves:Untitled Placemark": "Ranch Water",
+}
+
+# One record that is really one valve per system. The survey captured a single
+# point where two main-line shutoffs sit side by side, so it is expanded into one
+# copy per system, each placed at that system's nearest line terminus -- these
+# cap the ends of the mains, which is where the ranch says they are.
+DEVICE_SPLITS = {
+    "valves:Yancey and Ranch Main Water valves": [
+        ("Yancey", "Yancey Main Water Valve"),
+        ("Ranch Water", "Ranch Water Main Valve"),
+    ],
+}
+
+# Devices recorded slightly off the pipe they actually sit on. Repositioned onto
+# the nearest point of their own system's line rather than nudged by a hardcoded
+# offset, so the fix stays correct if the line geometry is ever re-surveyed.
+DEVICE_SNAP_TO_LINE = {"valves:Valve 7"}
 
 
 def _proj(lat0):
@@ -852,6 +881,101 @@ def _pt_seg(px, py, ax, ay, bx, by):
         return math.hypot(px - ax, py - ay), 0.0
     t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
     return math.hypot(px - (ax + t * dx), py - (ay + t * dy)), t
+
+
+def apply_field_corrections(built, names_by_layer):
+    """Apply the ranch's corrections to the feature data itself.
+
+    Done here, before both the GeoJSON write and the network build, so the point
+    you see on the map and the node the isolation walk uses are the same thing.
+    Doing it only inside build_network would have left the map showing a valve in
+    a position the network no longer believed in.
+
+    Returns the number of features added, so the caller knows to re-derive names.
+    """
+    lat0 = 29.178
+    to_m = _proj(lat0)
+    layer_system = {c["id"]: c.get("system", "") for c in LAYERS}
+
+    # Endpoints of every water line, per system -- "terminus" means a line end,
+    # not just any nearby point.
+    termini = {}
+    for lid in WATER_LINE_LAYERS:
+        s = layer_system.get(lid, "")
+        for f in built.get(lid, []):
+            c = f["geom"]["coordinates"]
+            termini.setdefault(s, []).extend([c[0], c[-1]])
+
+    def nearest_terminus(system, lon, lat):
+        px, py = to_m(lon, lat)
+        best = None
+        for p in termini.get(system, []):
+            qx, qy = to_m(p[0], p[1])
+            d = math.hypot(px - qx, py - qy)
+            if best is None or d < best[0]:
+                best = (d, p)
+        return best
+
+    def nearest_on_line(system, lon, lat):
+        px, py = to_m(lon, lat)
+        best = None
+        for lid in WATER_LINE_LAYERS:
+            if layer_system.get(lid) != system:
+                continue
+            for f in built.get(lid, []):
+                c = f["geom"]["coordinates"]
+                pm = [to_m(x[0], x[1]) for x in c]
+                for i in range(1, len(pm)):
+                    d, t = _pt_seg(px, py, pm[i - 1][0], pm[i - 1][1], pm[i][0], pm[i][1])
+                    if best is None or d < best[0]:
+                        best = (d, [c[i - 1][0] + t * (c[i][0] - c[i - 1][0]),
+                                    c[i - 1][1] + t * (c[i][1] - c[i - 1][1])])
+        return best
+
+    added = 0
+    for lid, entries in list(names_by_layer.items()):
+        feats = built.get(lid, [])
+        for (label, _src), f in list(zip(entries, feats)):
+            key = f"{lid}:{label}"
+
+            if key in DEVICE_SYSTEM_OVERRIDES:
+                f["props"]["System"] = DEVICE_SYSTEM_OVERRIDES[key]
+                f["props"]["System_Source"] = "Confirmed by ranch"
+
+            if key in DEVICE_SPLITS:
+                lon, lat = rep_point(f["geom"])
+                originals = DEVICE_SPLITS[key]
+                for n, (system, newname) in enumerate(originals):
+                    spot = nearest_terminus(system, lon, lat)
+                    pos = spot[1] if spot else [lon, lat]
+                    if n == 0:
+                        f["geom"] = {"type": "Point", "coordinates": list(pos)}
+                        f["props"]["Name"] = newname
+                        f["props"]["System"] = system
+                        f["props"]["System_Source"] = "Confirmed by ranch"
+                    else:
+                        clone = {
+                            "geom": {"type": "Point", "coordinates": list(pos)},
+                            "props": dict(f["props"], Name=newname, System=system,
+                                          System_Source="Confirmed by ranch"),
+                            "photos": list(f.get("photos") or []),
+                            "photos_web": list(f.get("photos_web") or []),
+                            "kml_name": newname,
+                        }
+                        feats.append(clone)
+                        added += 1
+                print(f"  split '{label}' into {len(originals)} valves, one per system, "
+                      f"at each system's nearest line terminus")
+
+            if key in DEVICE_SNAP_TO_LINE:
+                system = f["props"].get("System") or ""
+                lon, lat = rep_point(f["geom"])
+                spot = nearest_on_line(system, lon, lat)
+                if spot:
+                    f["geom"] = {"type": "Point", "coordinates": list(spot[1])}
+                    f["props"]["Position_Source"] = "Moved onto the line by the ranch"
+                    print(f"  moved '{label}' {spot[0]:.1f} m onto its {system} line")
+    return added
 
 
 def build_network(built, names_by_layer):
@@ -896,7 +1020,7 @@ def build_network(built, names_by_layer):
     guessed = 0
     ambiguous = 0
     for d in devices:
-        ov = DEVICE_SYSTEM_OVERRIDES.get(d["name"])
+        ov = DEVICE_SYSTEM_OVERRIDES.get(d["layer"] + ":" + d["name"])
         if ov:
             d["systems"] = [ov] if isinstance(ov, str) else list(ov)
             d["system"] = d["systems"][0]
@@ -1244,8 +1368,32 @@ def main():
     # so a traced result and a search hit always refer to the same asset.
     names_by_layer = {cfg["id"]: name_layer(cfg, built[cfg["id"]]) for cfg in LAYERS}
 
+    print("Applying field corrections...")
+    if apply_field_corrections(built, names_by_layer):
+        # A split added features, so names have to be re-derived before anything
+        # downstream keys off them.
+        names_by_layer = {cfg["id"]: name_layer(cfg, built[cfg["id"]]) for cfg in LAYERS}
+
     print("Deriving pipe network...")
     network = build_network(built, names_by_layer)
+
+    # Write the system the network resolved back onto the features themselves,
+    # so the map can colour a valve by its system and the popup can say where
+    # that came from. Without this the two disagree: the graph knows a valve is
+    # on Ranch Water while the feature it draws still has no System at all.
+    resolved = {(d["layer"], d["name"]): d for d in network["devices"]}
+    for cfg in LAYERS:
+        for (label, _src), f in zip(names_by_layer[cfg["id"]], built[cfg["id"]]):
+            d = resolved.get((cfg["id"], label))
+            if not d or not d.get("system"):
+                continue
+            if not (f["props"].get("System") or "").strip():
+                f["props"]["System"] = d["system"]
+                f["props"]["System_Source"] = (
+                    "Nearest pipe (unconfirmed)" if d.get("system_ambiguous") is not None
+                    else "Nearest pipe")
+            if d.get("system_ambiguous") is not None:
+                f["props"]["System_Ambiguous"] = str(d["system_ambiguous"])
 
     print("Writing GeoJSON...")
     search = []

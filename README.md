@@ -125,14 +125,21 @@ Things worth knowing, since they shape what the map shows:
   any one return the whole ranch. System identity, not proximity, decides — the
   same guard applies to gap-bridging, which would otherwise undo it. Mapped
   length: Yancey 19,411 ft, Ranch Water 17,654 ft, Irrigation 13,804 ft.
-- **Which system a valve is on is often a guess, and the map says so.** All 15
-  valves and 2 cut-offs have no `System` attribute. Because the systems share
-  trenches, **11 of those 17 sit within 2 m of a second system's pipe**, so the
-  nearest-line fallback is close to a coin flip. Those are shown with a `?` and a
-  tooltip rather than stated as fact. `DEVICE_SYSTEM_OVERRIDES` in
-  `build_data.py` takes field knowledge one line at a time, and accepts a list
-  for a valve that genuinely serves two systems (one is named "Yancey and Ranch
-  Main Water valves").
+- **Valve systems were confirmed by the ranch.** None of the 15 valves carried a
+  `System` attribute, and because the systems share trenches, 11 of them sat
+  within 2 m of a second system's pipe — proximity was close to a coin flip. The
+  ranch supplied the answers, now recorded in `DEVICE_SYSTEM_OVERRIDES`, and each
+  valve's popup shows whether its system was **Confirmed by ranch** or is still a
+  **Nearest pipe (unconfirmed)** guess. Nine non-valve devices (cut-offs, meters,
+  wells) remain unconfirmed and still render with a `?`.
+- **Two corrections beyond attribution**, both applied to the feature data itself
+  so the map and the network agree:
+  - `Yancey and Ranch Main Water valves` was one recorded point for what are
+    really two shutoffs side by side. `DEVICE_SPLITS` expands it into one valve
+    per system, each placed at that system's nearest line terminus.
+  - `Valve 7` sat ~1 m off its pipe. `DEVICE_SNAP_TO_LINE` moves it onto the
+    nearest point of its own system's line — computed rather than hardcoded, so
+    it stays right if the line is ever re-surveyed.
 - A valve and the valve box it sits in are two records at one spot (the layer is
   literally "Cut-Offs / Valve Boxes"), so records within 1.5 m merge into one
   junction while ones 2 m apart stay distinct — cut-offs here cluster that tightly.
@@ -180,6 +187,14 @@ Things worth knowing, since they shape what the map shows:
 - **Tools** — measure (ft/mi), drop-a-pin with coordinate copy, live lat/long
   and 1:N scale readouts, and PNG export with title/date/scale bar/north
   arrow/legend composited below the map.
+- **Stacked points cycle** — assets genuinely share a spot (a valve inside its
+  box; two valves capping different systems in one trench). 28 such clusters
+  exist, one holding 8 points. Clicking any of them pages through every asset
+  within ~18 px with an "n of m here" header, instead of only ever opening
+  whichever marker Leaflet drew on top.
+- **Valves are coloured by the system they shut off**, not by being valves —
+  which main a valve belongs to is the question being asked in the field. The
+  layer's legend swatch is tri-colour to say so.
 - **Trace connected system** — click any water main and "Trace system" lights up
   everything hydraulically continuous with it, with total footage and a list of
   every valve, cut-off and fitting on that system. Click a row to fly to it.
