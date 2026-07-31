@@ -172,13 +172,48 @@ def meters_between(a, b):
     return math.hypot(dx, dy)
 
 
+def interp_along(coords, t):
+    """The point a fraction t along a polyline, measured by DISTANCE.
+
+    Not the vertex at index len/2: the two survey revisions digitize the same
+    pipe with different vertex counts, so a middle-vertex "midpoint" lands in a
+    completely different place on each (230 m apart on one 634 m run), which
+    silently defeated duplicate detection.
+    """
+    total = line_length_m(coords)
+    if total <= 0:
+        return tuple(coords[0])
+    target, acc = t * total, 0.0
+    for i in range(1, len(coords)):
+        seg = meters_between(coords[i - 1], coords[i])
+        if acc + seg >= target:
+            f = 0.0 if seg == 0 else (target - acc) / seg
+            return (coords[i - 1][0] + f * (coords[i][0] - coords[i - 1][0]),
+                    coords[i - 1][1] + f * (coords[i][1] - coords[i - 1][1]))
+        acc += seg
+    return tuple(coords[-1])
+
+
+def line_offset(a, b):
+    """Mean separation between two polylines, sampled along their length.
+
+    Sampled rather than compared endpoint-to-endpoint so it is insensitive to
+    vertex count, and evaluated in both digitizing directions since one revision
+    sometimes draws a run the opposite way round.
+    """
+    ts = (0.1, 0.3, 0.5, 0.7, 0.9)
+    fwd = sum(meters_between(interp_along(a, t), interp_along(b, t)) for t in ts) / len(ts)
+    rev = sum(meters_between(interp_along(a, t), interp_along(b, 1 - t)) for t in ts) / len(ts)
+    return min(fwd, rev)
+
+
 def rep_point(geom):
     """A single representative coordinate for any geometry (for search/dedupe)."""
     c = geom["coordinates"]
     if geom["type"] == "Point":
         return tuple(c)
     if geom["type"] == "LineString":
-        return tuple(c[len(c) // 2])
+        return interp_along(c, 0.5)
     if geom["type"] == "Polygon":
         ring = c[0]
         return (sum(p[0] for p in ring) / len(ring), sum(p[1] for p in ring) / len(ring))
@@ -220,7 +255,13 @@ def same_feature(a, b):
     """
     if a["geom"]["type"] != b["geom"]["type"]:
         return False
-    d = meters_between(rep_point(a["geom"]), rep_point(b["geom"]))
+    # Lines are compared along their whole length, not at one representative
+    # point: two revisions of the same pipe can differ by a few metres anywhere
+    # along it while still obviously being the same run.
+    if a["geom"]["type"] == "LineString":
+        d = line_offset(a["geom"]["coordinates"], b["geom"]["coordinates"])
+    else:
+        d = meters_between(rep_point(a["geom"]), rep_point(b["geom"]))
     na, nb = _label(a), _label(b)
     if na and nb and na != nb:
         # A differing captured name is decisive: "Dove Tank Cutoff" and "Ice
@@ -1019,11 +1060,55 @@ def build_network(built, names_by_layer):
             "devices": devs,
         })
 
+    # --- flow direction ------------------------------------------------------
+    # Nothing in the survey records flow direction. What we have is the ranch's
+    # own description: water enters from the north road intersection and runs
+    # north to south, "with some exceptions". That is enough to root the graph:
+    # take the northernmost junction of each component as its inlet and measure
+    # every other node's hop distance from it. Direction is then "away from the
+    # inlet", which handles the exceptions correctly -- a spur that doubles back
+    # north is still downstream, because it is further along the pipe.
+    #
+    # This is DERIVED, not surveyed. `flow_source` is emitted so the map can say
+    # so, and so the assumed inlet can be checked against reality.
+    inlets = []
+    for c in components:
+        node_ids = set()
+        for ei in c["edges"]:
+            node_ids.add(edges[ei]["a"]); node_ids.add(edges[ei]["b"])
+        if not node_ids:
+            continue
+        root = max(node_ids, key=lambda i: nodes[i]["lat"])
+        inlets.append(root)
+        depth = {root: 0}
+        queue = [root]
+        while queue:
+            cur = queue.pop(0)
+            for e in edges:
+                if e["a"] == cur and e["b"] not in depth:
+                    depth[e["b"]] = depth[cur] + 1; queue.append(e["b"])
+                elif e["b"] == cur and e["a"] not in depth:
+                    depth[e["a"]] = depth[cur] + 1; queue.append(e["a"])
+        for ni, d in depth.items():
+            nodes[ni]["depth"] = d
+        c["inlet"] = root
+    for n in nodes:
+        n.setdefault("depth", None)
+
+    main = components[0] if components else None
+    if main and "inlet" in main:
+        r = nodes[main["inlet"]]
+        print(f"  assumed inlet for the main system: {r['lat']:.6f}, {r['lon']:.6f} "
+              f"(northernmost junction) -- flow measured outward from there")
+
     out = {
+        "flow_source": "derived: northernmost junction of each system, per the "
+                       "ranch's description of water entering from the north",
         "snap_m": SNAP_M,
         "device_on_line_m": DEVICE_ON_LINE_M,
         "devices": devices,
-        "nodes": [{"lon": round(n["lon"], 6), "lat": round(n["lat"], 6), "devs": n["devs"]} for n in nodes],
+        "nodes": [{"lon": round(n["lon"], 6), "lat": round(n["lat"], 6),
+                   "devs": n["devs"], "depth": n.get("depth")} for n in nodes],
         "edges": [{k: v for k, v in e.items() if k != "comp"} | {"comp": e.get("comp", -1)} for e in edges],
         "components": components,
     }

@@ -178,7 +178,7 @@
    "title": "Yancey Water Line",
    "category": "Water Lines",
    "geometry": "line",
-   "count": 26,
+   "count": 27,
    "label_field": "name",
    "popup_fields": [
     "Name",
@@ -214,7 +214,7 @@
    "title": "Lake Irrigation Line",
    "category": "Water Lines",
    "geometry": "line",
-   "count": 15,
+   "count": 16,
    "label_field": "name",
    "popup_fields": [
     "Name",

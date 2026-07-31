@@ -611,11 +611,37 @@
     var ids = Object.keys(valves).map(Number);
     var len = 0;
     Object.keys(affected).forEach(function (ei) { len += NET.edges[ei].len_ft; });
+
+    // Split the valves by which side of the run they sit on. "depth" is hops
+    // from the system's inlet, derived from the ranch's own account of water
+    // entering at the north road intersection -- so a valve shallower than the
+    // run is between it and the supply, and closing that one is what actually
+    // stops water arriving. Anything deeper only stops water continuing past.
+    var runDepth = null;
+    seed.forEach(function (ei) {
+      [NET.edges[ei].a, NET.edges[ei].b].forEach(function (nd) {
+        var d = NET.nodes[nd].depth;
+        if (d != null && (runDepth === null || d < runDepth)) runDepth = d;
+      });
+    });
+    var list = ids.map(function (d) {
+      var nd = NET.nodes[valves[d]];
+      var side = "unknown";
+      if (runDepth !== null && nd.depth != null) {
+        side = nd.depth < runDepth ? "supply" : "down";
+      }
+      return { dev: NET.devices[d], idx: d, node: valves[d], side: side, depth: nd.depth };
+    });
+    // Supply-side first, and nearest the inlet first within that -- the order
+    // someone would actually work in.
+    list.sort(function (a, b) {
+      if (a.side !== b.side) return a.side === "supply" ? -1 : 1;
+      return (a.depth || 0) - (b.depth || 0);
+    });
+
     return {
-      kind: "isolate",
-      edges: Object.keys(affected).map(Number),
-      valves: ids.map(function (d) { return { dev: NET.devices[d], idx: d, node: valves[d] }; }),
-      len_ft: len
+      kind: "isolate", edges: Object.keys(affected).map(Number),
+      valves: list, len_ft: len, runDepth: runDepth
     };
   }
 
@@ -720,11 +746,32 @@
         html += '<div class="trace-note warn">No closing device was found on any branch out of this run &mdash; ' +
           "the survey records no valve or cut-off that would isolate it.</div>";
       }
-      html += '<div class="trace-sec">Close these, in no particular order</div>';
-      v.forEach(function (x, i) {
-        html += '<div class="trace-row" data-layer="' + esc(x.dev.layer) + '" data-name="' +
-          esc(x.dev.name) + '">' + traceRowHtml(x.dev, i + 1) + "</div>";
-      });
+      var supply = v.filter(function (x) { return x.side === "supply"; });
+      var down = v.filter(function (x) { return x.side !== "supply"; });
+      var num = 0;
+      if (supply.length) {
+        html += '<div class="trace-sec">Supply side &mdash; stops water reaching it</div>';
+        supply.forEach(function (x) {
+          num++;
+          html += '<div class="trace-row" data-layer="' + esc(x.dev.layer) + '" data-name="' +
+            esc(x.dev.name) + '">' + traceRowHtml(x.dev, num) + "</div>";
+        });
+      }
+      if (down.length) {
+        html += '<div class="trace-sec">' +
+          (supply.length ? "Downstream &mdash; stops water continuing past" : "Close these") + "</div>";
+        down.forEach(function (x) {
+          num++;
+          html += '<div class="trace-row" data-layer="' + esc(x.dev.layer) + '" data-name="' +
+            esc(x.dev.name) + '">' + traceRowHtml(x.dev, num) + "</div>";
+        });
+      }
+      if (supply.length || down.length) {
+        html += '<div class="trace-note warn" style="border-top:1px solid var(--border)">' +
+          "Which side is which is <em>derived</em>, not surveyed: it assumes water enters at the " +
+          "northernmost junction of the system and runs outward from there. The valve list itself " +
+          "does not depend on that assumption &mdash; only the grouping does.</div>";
+      }
     } else {
       var closing = res.devices.filter(function (x) { return x.dev.closes; });
       html += '<div class="trace-stats">' +

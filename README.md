@@ -127,6 +127,29 @@ Things worth knowing, since they shape what the map shows:
     is literally "Cut-Offs / Valve Boxes"), so records within 1.5 m are merged
     into one junction while ones 2 m apart stay distinct — cut-offs on this
     ranch genuinely cluster that tightly.
+- **Flow direction is derived, not surveyed.** Nothing in the source records it.
+  The ranch's own account — water enters at the north road intersection and runs
+  north to south, with exceptions — is enough to root the graph: the northernmost
+  junction of each system is taken as its inlet and every node gets a hop
+  distance from it. "Downstream" then means further along the pipe, which handles
+  the exceptions (a spur doubling back north is still downstream). Sanity check:
+  latitude and hops-from-inlet correlate at **−0.50**, i.e. deeper in the network
+  really is further south. Only the supply/downstream *grouping* in the isolation
+  result depends on this; the valve list itself does not.
+- **Some pipe runs appear two or four times.** Where the same run exists in both
+  survey revisions AND in two layers, the map currently carries all copies. Two
+  separate causes, only one of which is fixed:
+  - *Fixed:* cross-revision duplicates were escaping detection because
+    `rep_point()` took the middle vertex *index*, so the same 634 m pipe drawn
+    with 10 vs 6 vertices had "midpoints" 230 m apart. Lines are now compared by
+    mean separation sampled along their length, in both digitizing directions.
+  - *Open question:* runs like `Yancey Water Line 17` and `Ranch Water Line 3`
+    track within 0.5–1.5 m of each other for 2,000 ft but sit in different
+    layers, and two revisions of one run can diverge ~9 m in the middle while
+    their ends coincide. That is either one pipe digitized twice or two pipes
+    sharing a trench — the geometry cannot settle it, and merging them would
+    change both the total footage and whether the three systems are genuinely
+    tied together. Left un-merged pending someone who knows the ground.
 - **Esri basemap depth over this ranch is z19, not the service maximum.**
   Measured directly: World_Imagery returns real tiles through z19 and an
   identical 2.5 KB "not available" placeholder at z20+. Both basemaps are capped
