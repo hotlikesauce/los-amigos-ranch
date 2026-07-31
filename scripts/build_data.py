@@ -788,8 +788,15 @@ def build_photos(built):
 #
 # Model: endpoints that land within SNAP_M of each other are the same junction;
 # a closing device (valve / cut-off) sitting on a line splits it there, so the
-# device becomes a real node the traversal can stop at. Connected components
-# over that graph are the distinct water systems.
+# device becomes a real node the traversal can stop at.
+#
+# Crucially the graph is built PER SYSTEM and the systems are never joined. The
+# ranch runs Yancey, Ranch Water and Irrigation as hydraulically separate
+# systems that share trenches -- their pipes run within a metre or two of each
+# other for thousands of feet without connecting. Snapping purely on distance
+# tied all three together at 27 junctions and made a trace from any one of them
+# return the whole ranch, which is wrong. Proximity alone cannot tell a shared
+# trench from a tee, so system identity is what decides.
 WATER_LINE_LAYERS = ["yancey_water", "ranch_water", "lake_irrigation_water"]
 # Devices that can actually shut water off -- the ones an isolation answer is
 # allowed to name.
@@ -814,6 +821,20 @@ CO_LOCATED_M = 1.5
 # between components is 21 m -- so 15 m sits inside a clean gap. Bridges are
 # flagged `inferred` so the UI can say the survey never recorded that tie-in.
 BRIDGE_M = 15.0
+
+# Which system a valve belongs to, where the survey didn't record it and
+# proximity can't decide. All 15 valves and 2 cut-offs have no System attribute,
+# and because the systems share trenches, 11 of those 17 sit within 2 m of a
+# second system's pipe -- the nearest-line fallback is effectively a coin flip
+# for them. Field knowledge is the only thing that settles it, so put it here.
+#
+# A value may be a list: a device can genuinely serve more than one system (see
+# "Yancey and Ranch Main Water valves", whose own name says so), in which case it
+# is placed on each and will show up when isolating any of them.
+#
+#   "Valve 8": "Yancey",
+#   "Yancey and Ranch Main Water valves": ["Yancey", "Ranch Water"],
+DEVICE_SYSTEM_OVERRIDES = {}
 
 
 def _proj(lat0):
@@ -853,11 +874,68 @@ def build_network(built, names_by_layer):
             devices.append({
                 "layer": lid, "name": label, "lon": lon, "lat": lat,
                 "closes": lid in CLOSING_LAYERS,
-                "system": sys_of(lid, f),
+                "system": (f["props"].get("System") or "").strip(),
                 "photos": list(f.get("photos_web") or []),
             })
 
-    nodes = []          # {lon, lat, x, y, devs: [device indices]}
+    # Every water line, tagged with the system its layer represents.
+    all_lines = []
+    for lid in WATER_LINE_LAYERS:
+        for (label, _src), f in zip(names_by_layer.get(lid, []), built.get(lid, [])):
+            all_lines.append({
+                "layer": lid, "name": label, "system": layer_system.get(lid, ""),
+                "coords": f["geom"]["coordinates"],
+            })
+
+    # 27 of the 70 devices have no System recorded. Since the graph is now built
+    # per system, each of those has to be assigned to one or it would drop out
+    # entirely -- so it inherits the system of the nearest water line. In a
+    # shared trench the pipes are only a metre or two apart, so this is a real
+    # assumption, not a free one; it is reported below and the alternative
+    # (letting an unknown device join every system) would over-report valves.
+    guessed = 0
+    ambiguous = 0
+    for d in devices:
+        ov = DEVICE_SYSTEM_OVERRIDES.get(d["name"])
+        if ov:
+            d["systems"] = [ov] if isinstance(ov, str) else list(ov)
+            d["system"] = d["systems"][0]
+            d["system_source"] = "override"
+            continue
+        if d["system"]:
+            d["systems"] = [d["system"]]
+            d["system_source"] = "surveyed"
+            continue
+        dx, dy = to_m(d["lon"], d["lat"])
+        near = {}
+        for ln in all_lines:
+            if not ln["system"]:
+                continue
+            pm = [to_m(c[0], c[1]) for c in ln["coords"]]
+            for i in range(1, len(pm)):
+                dist, _ = _pt_seg(dx, dy, pm[i - 1][0], pm[i - 1][1], pm[i][0], pm[i][1])
+                if ln["system"] not in near or dist < near[ln["system"]]:
+                    near[ln["system"]] = dist
+        ranked = sorted(near.items(), key=lambda kv: kv[1])
+        if ranked and ranked[0][1] <= DEVICE_ON_LINE_M:
+            d["system"] = ranked[0][0]
+            d["systems"] = [ranked[0][0]]
+            d["system_source"] = "nearest line"
+            guessed += 1
+            # Flag the coin-flips so the map can show them as uncertain rather
+            # than stating a system it does not actually know.
+            if len(ranked) > 1 and ranked[1][1] - ranked[0][1] < 2.0:
+                d["system_ambiguous"] = round(ranked[1][1] - ranked[0][1], 2)
+                ambiguous += 1
+        else:
+            d["systems"] = []
+            d["system_source"] = "unknown"
+    print(f"  {guessed} device(s) had no System recorded; assigned from the nearest line")
+    if ambiguous:
+        print(f"  ! {ambiguous} of those sit within 2 m of a second system's pipe -- "
+              f"a shared trench makes proximity a guess. Set DEVICE_SYSTEM_OVERRIDES to fix.")
+
+    nodes = []          # {lon, lat, x, y, sys, devs: [device indices]}
     def node_at(lon, lat, devlist=()):
         """Find or create the junction node at this position.
 
@@ -877,6 +955,10 @@ def build_network(built, names_by_layer):
         x, y = to_m(lon, lat)
         devlist = list(devlist)
         for i, n in enumerate(nodes):
+            # Never join two systems, however close they run: they share
+            # trenches without connecting.
+            if n["sys"] != cur_sys:
+                continue
             d = math.hypot(n["x"] - x, n["y"] - y)
             if d > SNAP_M:
                 continue
@@ -885,11 +967,17 @@ def build_network(built, names_by_layer):
                 continue
             n["devs"].extend(fresh)
             return i
-        nodes.append({"lon": lon, "lat": lat, "x": x, "y": y, "devs": devlist})
+        nodes.append({"lon": lon, "lat": lat, "x": x, "y": y,
+                      "sys": cur_sys, "devs": devlist})
         return len(nodes) - 1
 
     edges = []
-    for lid in WATER_LINE_LAYERS:
+    # One pass per system. `cur_sys` is what node_at consults to refuse a merge
+    # across systems, and only that system's devices are allowed to split its
+    # lines -- a Yancey cut-off must not appear as a valve on the Ranch Water
+    # pipe it happens to lie a metre from in the same trench.
+    for cur_sys in sorted({ln["system"] for ln in all_lines if ln["system"]}):
+      for lid in [l for l in WATER_LINE_LAYERS if layer_system.get(l) == cur_sys]:
         feats = built.get(lid, [])
         labels = names_by_layer.get(lid, [])
         for (label, _src), f in zip(labels, feats):
@@ -908,6 +996,8 @@ def build_network(built, names_by_layer):
 
             splits = []     # (distance along line, device index)
             for di, d in enumerate(devices):
+                if cur_sys not in d.get("systems", []):
+                    continue
                 dx, dy = to_m(d["lon"], d["lat"])
                 best = None
                 for i in range(1, len(pm)):
@@ -1011,6 +1101,12 @@ def build_network(built, names_by_layer):
     for ai in range(len(dangling)):
         for bi in range(ai + 1, len(dangling)):
             a, b = dangling[ai], dangling[bi]
+            # Same guard as node_at: a gap is only bridged within one system.
+            # Without this the bridging step would quietly undo the separation,
+            # since ends of different systems in a shared trench sit well inside
+            # BRIDGE_M of each other.
+            if nodes[a]["sys"] != nodes[b]["sys"]:
+                continue
             d = math.hypot(nodes[a]["x"] - nodes[b]["x"], nodes[a]["y"] - nodes[b]["y"])
             if d <= BRIDGE_M:
                 cands.append((d, a, b))
@@ -1108,7 +1204,8 @@ def build_network(built, names_by_layer):
         "device_on_line_m": DEVICE_ON_LINE_M,
         "devices": devices,
         "nodes": [{"lon": round(n["lon"], 6), "lat": round(n["lat"], 6),
-                   "devs": n["devs"], "depth": n.get("depth")} for n in nodes],
+                   "devs": n["devs"], "depth": n.get("depth"), "sys": n["sys"]}
+                  for n in nodes],
         "edges": [{k: v for k, v in e.items() if k != "comp"} | {"comp": e.get("comp", -1)} for e in edges],
         "components": components,
     }

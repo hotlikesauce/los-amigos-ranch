@@ -115,18 +115,27 @@ Things worth knowing, since they shape what the map shows:
 - **The pipe network is derived, not surveyed.** Nothing in the source records
   how the lines connect — `build_network()` infers it from geometry: line ends
   within 4 m are one junction, and a valve or cut-off within 13 m of a line
-  splits it there so traversal can stop at it. Every threshold was set from the
-  measured data, not by feel: 45 of 47 closing devices sit within 7 m of a line,
-  one at 12.1 m, and the next is 58.8 m away, so 13 m falls in a wide empty gap.
-  Result: **46 of 47** closing devices land on the network, and 94% of the pipe
-  length forms one connected system. Two caveats worth knowing —
-  - the three "systems" are physically tied together, so a trace from any of
-    them returns the whole 48,400 ft network; that appears to be real, not an
-    artifact, and the pane says which systems the run carries.
-  - a valve and the valve box it sits in are two records at one spot (the layer
-    is literally "Cut-Offs / Valve Boxes"), so records within 1.5 m are merged
-    into one junction while ones 2 m apart stay distinct — cut-offs on this
-    ranch genuinely cluster that tightly.
+  splits it there so traversal can stop at it. Thresholds come from the measured
+  data: 45 of 47 closing devices sit within 7 m of a line, one at 12.1 m, and the
+  next is 58.8 m away, so 13 m falls in a wide empty gap.
+- **The graph is built per system, and the systems are never joined.** Yancey,
+  Ranch Water and Irrigation are hydraulically separate but **share trenches**,
+  running within a metre of each other for thousands of feet. Snapping on
+  distance alone tied all three together at 27 junctions and made a trace from
+  any one return the whole ranch. System identity, not proximity, decides — the
+  same guard applies to gap-bridging, which would otherwise undo it. Mapped
+  length: Yancey 19,411 ft, Ranch Water 17,654 ft, Irrigation 13,804 ft.
+- **Which system a valve is on is often a guess, and the map says so.** All 15
+  valves and 2 cut-offs have no `System` attribute. Because the systems share
+  trenches, **11 of those 17 sit within 2 m of a second system's pipe**, so the
+  nearest-line fallback is close to a coin flip. Those are shown with a `?` and a
+  tooltip rather than stated as fact. `DEVICE_SYSTEM_OVERRIDES` in
+  `build_data.py` takes field knowledge one line at a time, and accepts a list
+  for a valve that genuinely serves two systems (one is named "Yancey and Ranch
+  Main Water valves").
+- A valve and the valve box it sits in are two records at one spot (the layer is
+  literally "Cut-Offs / Valve Boxes"), so records within 1.5 m merge into one
+  junction while ones 2 m apart stay distinct — cut-offs here cluster that tightly.
 - **Flow direction is derived, not surveyed.** Nothing in the source records it.
   The ranch's own account — water enters at the north road intersection and runs
   north to south, with exceptions — is enough to root the graph: the northernmost
@@ -143,13 +152,9 @@ Things worth knowing, since they shape what the map shows:
     `rep_point()` took the middle vertex *index*, so the same 634 m pipe drawn
     with 10 vs 6 vertices had "midpoints" 230 m apart. Lines are now compared by
     mean separation sampled along their length, in both digitizing directions.
-  - *Open question:* runs like `Yancey Water Line 17` and `Ranch Water Line 3`
-    track within 0.5–1.5 m of each other for 2,000 ft but sit in different
-    layers, and two revisions of one run can diverge ~9 m in the middle while
-    their ends coincide. That is either one pipe digitized twice or two pipes
-    sharing a trench — the geometry cannot settle it, and merging them would
-    change both the total footage and whether the three systems are genuinely
-    tied together. Left un-merged pending someone who knows the ground.
+  - *Resolved by the ranch:* runs like `Yancey Water Line 17` and `Ranch Water
+    Line 3` track within 0.5–1.5 m for 2,000 ft because **they share a trench**.
+    They are two real pipes, not one recorded twice, and the systems do not mix.
 - **Esri basemap depth over this ranch is z19, not the service maximum.**
   Measured directly: World_Imagery returns real tiles through z19 and an
   identical 2.5 KB "not available" placeholder at z20+. Both basemaps are capped

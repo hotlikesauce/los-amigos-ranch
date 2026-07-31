@@ -711,9 +711,17 @@
     var color = colorFor(d.layer);
     var badge = n != null ? '<span class="num">' + n + "</span>"
                           : '<span class="sw" style="background:' + color + '"></span>';
+    // Where the system was guessed from proximity and a second system's pipe is
+    // within 2 m, say so rather than presenting the guess as fact -- these
+    // pipes share trenches, so the nearest line is not reliable evidence.
+    var sysTxt = d.system ? " &middot; " + esc(d.system) : "";
+    if (d.system && d.system_ambiguous != null) {
+      sysTxt = ' &middot; <span title="Assigned from the nearest pipe, but another system runs ' +
+        d.system_ambiguous + ' m away in the same trench — unconfirmed">' +
+        esc(d.system) + "?</span>";
+    }
     return badge + '<span class="nm">' + esc(d.name) +
-      "<small>" + esc(LAYER_TITLE[d.layer] || d.layer) +
-      (d.system ? " &middot; " + esc(d.system) : "") + "</small></span>" +
+      "<small>" + esc(LAYER_TITLE[d.layer] || d.layer) + sysTxt + "</small></span>" +
       (d.photos && d.photos.length
         ? '<span class="cam" title="' + d.photos.length + ' photo(s)">' +
           '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
