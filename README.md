@@ -59,7 +59,7 @@ That regenerates everything the map reads, from the raw deliverables in `Data/`:
 | `public/data/photos.json` | Photo metadata (coords, date, how it was geotagged) |
 | `public/data/network.json` | Derived pipe graph — junctions, segments, components |
 | `public/photos/`, `photos/thumb/` | Web-sized (1600px) + thumbnail (320px) JPEGs |
-| `public/imagery/*.png` | 2018 NAIP aerial, extracted from the KMZ GroundOverlays |
+| `public/imagery/naip/` | 2018 NAIP aerial XYZ tiles (separate script, see below) |
 
 ## Where the data comes from
 
@@ -69,7 +69,7 @@ That regenerates everything the map reads, from the raw deliverables in `Data/`:
 | `Los Amigos Ranch Updated _Post Review.kmz` | Same survey, one revision earlier — carries the photo↔placemark links and some features Feb23 dropped |
 | `LosAmigos_2017_Infrastructure.kmz` | Roads, fences, buildings, lakes, hunting & livestock features |
 | `2022 Survey/Electric_Box.shp` | 3 electric boxes — the only shapefile record set no KMZ exposes |
-| `LosAmigos_Data_35Percent_42x.kmz` | June 2018 NAIP aerial imagery |
+| `Imagery0 Update\m_2909955_{nw,sw}_*.tif` (GIS share) | June 2018 NAIP aerial, 0.6 m/px |
 | `2022 Survey/*.jpg` | 27 survey photos |
 
 ### Notes on the source data
@@ -102,15 +102,13 @@ Things worth knowing, since they shape what the map shows:
   visible rather than looking like an omission.
 - The survey shapefiles are in **Web Mercator**, not lon/lat; the build
   reprojects them.
-- **The supplied ranch aerial is low resolution — so it was rebuilt.**
+- **The supplied ranch aerial was unusable, so it was replaced.**
   `LosAmigos_Data_35Percent_42x.kmz` holds two 1024×1017 px PNGs covering 7.7 km
   each — about **7.5 m/px**, a 1:1 pixel match only at ~zoom 14. The filename
-  says as much: a 35%-downsampled export, not the source NAIP.
-  `scripts/build_imagery.py` re-exports from the original
-  `m_2909955_{nw,sw}_14_060_20180602.tif` quarter-quads on the GIS share
-  (0.6 m/px, NAD83 / UTM 14N, 4-band) — **12× sharper**. Both are offered as
-  separate toggles under Reference Imagery; the KMZ version is kept because it
-  is the imagery the survey itself was drawn against.
+  says as much: a 35%-downsampled export, not the source NAIP. It is no longer
+  built or served. `scripts/build_imagery.py` produces the aerial instead, from
+  the original `m_2909955_{nw,sw}_14_060_20180602.tif` quarter-quads on the GIS
+  share (0.6 m/px, NAD83 / UTM 14N, 4-band) — **12× sharper**.
 - **The pipe network is derived, not surveyed.** Nothing in the source records
   how the lines connect — `build_network()` infers it from geometry: line ends
   within 4 m are one junction, and a valve or cut-off within 13 m of a line

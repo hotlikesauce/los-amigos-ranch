@@ -1080,32 +1080,19 @@
     });
 
     // Ranch imagery is reference material, not inventory, so it gets its own
-    // group. Two versions are offered: the full-resolution NAIP rebuilt from the
-    // source GeoTIFFs, and the low-res export that came in the supplied KMZ --
-    // kept because it is the imagery the survey itself was drawn against.
+    // group. Only the full-resolution NAIP re-export is offered -- the 7.5 m/px
+    // version that shipped in the KMZ was dropped once this replaced it.
     var overlayDefs = [];
     if (NAIP) {
       overlayDefs.push({
-        label: "Ranch Aerial — 2018 NAIP",
-        sub: "0.6 m/px · full resolution",
+        label: "Ranch Aerial — June 2018",
+        sub: "USDA NAIP · 0.6 m/px",
         make: function () {
           return L.tileLayer(NAIP.url, {
             minZoom: NAIP.minZoom, maxNativeZoom: NAIP.maxNativeZoom, maxZoom: 22,
             bounds: L.latLngBounds(NAIP.bounds), pane: "ranchImagery",
             attribution: NAIP.attribution, crossOrigin: true
           });
-        }
-      });
-    }
-    if ((CFG.imagery || []).length) {
-      overlayDefs.push({
-        label: "Ranch Aerial — 2018 (KMZ)",
-        sub: "7.5 m/px · as supplied",
-        make: function () {
-          return L.layerGroup(CFG.imagery.map(function (im) {
-            return L.imageOverlay("imagery/" + im.file, im.bounds,
-              { opacity: 1, pane: "ranchImagery", crossOrigin: true });
-          }));
         }
       });
     }

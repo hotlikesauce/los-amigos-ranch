@@ -16,8 +16,10 @@ Sources, and why each one is used:
     buildings, hunting/livestock features, lake labels).
   * "2022 Survey/Electric_Box.shp" - 3 electric boxes; the only shapefile
     layer with records that no KMZ exposes.
-  * "LosAmigos_Data_35Percent_42x.kmz" - 2018 NAIP aerial as two KML
-    GroundOverlays, re-emitted as PNG + bounds for L.imageOverlay.
+
+Aerial imagery is NOT built here: the KMZ's 7.5 m/px export was dropped in
+favour of the full-resolution NAIP re-export, which scripts/build_imagery.py
+produces from the source GeoTIFFs on the GIS share.
 
 Photo geotagging uses two independent signals: the KML <img> links (exact --
 the survey crew attached each photo to a placemark) and EXIF GPS (present on
@@ -49,14 +51,12 @@ SURVEY = DATA / "2022 Survey"
 OUT = ROOT / "public"
 OUT_DATA = OUT / "data"
 OUT_PHOTOS = OUT / "photos"
-OUT_IMAGERY = OUT / "imagery"
 
 K = "{http://www.opengis.net/kml/2.2}"
 
 KMZ_FEB23 = SURVEY / "Los Amigos Ranch Updated Feb23.kmz"
 KMZ_POST = SURVEY / "Los Amigos Ranch Updated _Post Review.kmz"
 KMZ_2017 = DATA / "LosAmigos_2017_Infrastructure.kmz"
-KMZ_AERIAL = DATA / "LosAmigos_Data_35Percent_42x.kmz"
 
 # Every KMZ is scanned for photo<->placemark links, not just the two above:
 # older revisions sometimes carry a link the newer ones dropped.
@@ -1042,30 +1042,6 @@ def build_network(built, names_by_layer):
     return out
 
 
-# -------------------------------------------------------------------- aerial
-def build_aerial():
-    """Re-emit the KML GroundOverlays as PNG + LatLonBox bounds."""
-    doc, z = read_kml(KMZ_AERIAL)
-    OUT_IMAGERY.mkdir(parents=True, exist_ok=True)
-    out = []
-    for go in doc.iter(K + "GroundOverlay"):
-        href = go.findtext(".//" + K + "href")
-        box = go.find(K + "LatLonBox")
-        if not href or box is None:
-            continue
-        png = href.split("/")[-1]
-        with open(OUT_IMAGERY / png, "wb") as fh:
-            fh.write(z.read(href))
-        out.append({
-            "file": png,
-            "name": go.findtext(K + "name") or png,
-            "bounds": [[float(box.findtext(K + "south")), float(box.findtext(K + "west"))],
-                       [float(box.findtext(K + "north")), float(box.findtext(K + "east"))]],
-        })
-        print(f"  imagery: {png} {out[-1]['bounds']}")
-    return out
-
-
 # --------------------------------------------------------------------- write
 def main():
     if not KMZ_FEB23.exists():
@@ -1088,9 +1064,6 @@ def main():
 
     print("Deriving pipe network...")
     network = build_network(built, names_by_layer)
-
-    print("Extracting aerial imagery...")
-    aerial = build_aerial()
 
     print("Writing GeoJSON...")
     search = []
@@ -1176,7 +1149,6 @@ def main():
         "subtitle": "Infrastructure & Water Systems Inventory",
         "categories": CATEGORIES,
         "layers": catalog,
-        "imagery": aerial,
         "center": [round((min(lats) + max(lats)) / 2, 6), round((min(lons) + max(lons)) / 2, 6)],
         "bounds": [[round(min(lats), 6), round(min(lons), 6)],
                    [round(max(lats), 6), round(max(lons), 6)]],
