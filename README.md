@@ -36,6 +36,7 @@ That regenerates everything the map reads, from the raw deliverables in `Data/`:
 | `public/data/*.geojson` | One file per layer (25 layers, 386 features) |
 | `public/data/search_index.json` | Flat searchable index incl. alternate names |
 | `public/data/photos.json` | Photo metadata (coords, date, how it was geotagged) |
+| `public/data/network.json` | Derived pipe graph — junctions, segments, components |
 | `public/photos/`, `photos/thumb/` | Web-sized (1600px) + thumbnail (320px) JPEGs |
 | `public/imagery/*.png` | 2018 NAIP aerial, extracted from the KMZ GroundOverlays |
 
@@ -89,6 +90,21 @@ Things worth knowing, since they shape what the map shows:
   those GeoTIFFs. In the meantime Esri's aerial basemap (real tiles to z19, ~0.3
   m/px here) is the sharper option and the ranch overlay is best treated as an
   "as-surveyed 2018" mid-zoom reference.
+- **The pipe network is derived, not surveyed.** Nothing in the source records
+  how the lines connect — `build_network()` infers it from geometry: line ends
+  within 4 m are one junction, and a valve or cut-off within 13 m of a line
+  splits it there so traversal can stop at it. Every threshold was set from the
+  measured data, not by feel: 45 of 47 closing devices sit within 7 m of a line,
+  one at 12.1 m, and the next is 58.8 m away, so 13 m falls in a wide empty gap.
+  Result: **46 of 47** closing devices land on the network, and 94% of the pipe
+  length forms one connected system. Two caveats worth knowing —
+  - the three "systems" are physically tied together, so a trace from any of
+    them returns the whole 48,400 ft network; that appears to be real, not an
+    artifact, and the pane says which systems the run carries.
+  - a valve and the valve box it sits in are two records at one spot (the layer
+    is literally "Cut-Offs / Valve Boxes"), so records within 1.5 m are merged
+    into one junction while ones 2 m apart stay distinct — cut-offs on this
+    ranch genuinely cluster that tightly.
 - **Esri basemap depth over this ranch is z19, not the service maximum.**
   Measured directly: World_Imagery returns real tiles through z19 and an
   identical 2.5 KB "not available" placeholder at z20+. Both basemaps are capped
@@ -114,6 +130,16 @@ Things worth knowing, since they shape what the map shows:
 - **Tools** — measure (ft/mi), drop-a-pin with coordinate copy, live lat/long
   and 1:N scale readouts, and PNG export with title/date/scale bar/north
   arrow/legend composited below the map.
+- **Trace connected system** — click any water main and "Trace system" lights up
+  everything hydraulically continuous with it, with total footage and a list of
+  every valve, cut-off and fitting on that system. Click a row to fly to it.
+- **Isolation valves** — "Isolate" walks outward from the clicked run and stops
+  at the first device that can close on every branch, giving the set of valves
+  to shut to kill water to that line. They're numbered on the map to match the
+  list. Deliberately not labelled "upstream/downstream": the survey records no
+  flow direction, so naming one would be inventing information.
+- **Photo gallery** — all 27 survey photos in one grid, filterable by asset
+  type, with "Show on map" to jump from a photo to the asset it documents.
 - **Zoom-responsive symbology** — marker glyphs and labels grow as you zoom in,
   so symbols sized for the ranch-wide view don't shrink into irrelevance when
   you're inspecting one valve. Icons are *rebuilt* at each size rather than

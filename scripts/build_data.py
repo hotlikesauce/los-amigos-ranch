@@ -739,6 +739,309 @@ def build_photos(built):
     return records
 
 
+# ------------------------------------------------------------------- network
+# The water lines are a pile of independent LineStrings; nothing in the survey
+# records how they connect. This derives the actual pipe network from the
+# geometry so the map can answer the two questions that matter in the field:
+# "what else is on this line?" and "which valves shut it off?".
+#
+# Model: endpoints that land within SNAP_M of each other are the same junction;
+# a closing device (valve / cut-off) sitting on a line splits it there, so the
+# device becomes a real node the traversal can stop at. Connected components
+# over that graph are the distinct water systems.
+WATER_LINE_LAYERS = ["yancey_water", "ranch_water", "lake_irrigation_water"]
+# Devices that can actually shut water off -- the ones an isolation answer is
+# allowed to name.
+CLOSING_LAYERS = ["valves", "cutoffs"]
+# On the network but not able to close it; listed as "what's on this system".
+FITTING_LAYERS = ["manifolds", "risers", "transfer_points", "meters",
+                  "water_wells", "water_pumps", "irrigation_pivots"]
+
+SNAP_M = 4.0        # endpoints this close are one junction
+# How far off a line a device may sit and still count as being on it. Measured:
+# 45 of the 47 closing devices are within 7 m of a water line, one more sits at
+# 12.1 m, and the next nearest is 58.8 m away. 13 m therefore sits inside a very
+# wide, unambiguous gap -- it is not a round number picked by feel, and the one
+# device it excludes ("End of Ranch Line") really is off on its own.
+DEVICE_ON_LINE_M = 13.0
+# Two device records closer than this are treated as one fitting (a valve and
+# the valve box it sits in), rather than as two things that can close.
+CO_LOCATED_M = 1.5
+# Dangling line ends this close across a break are joined by an inferred link.
+# Measured: after the co-located fix the only remaining break is a single 14.2 m
+# gap that fragments a 6,651 ft Yancey main, and the next closest approach
+# between components is 21 m -- so 15 m sits inside a clean gap. Bridges are
+# flagged `inferred` so the UI can say the survey never recorded that tie-in.
+BRIDGE_M = 15.0
+
+
+def _proj(lat0):
+    """Local equirectangular metres around the ranch -- exact enough at 3 km."""
+    kx = math.cos(math.radians(lat0)) * 111320.0
+    ky = 110540.0
+    return (lambda lon, lat: (lon * kx, lat * ky))
+
+
+def _pt_seg(px, py, ax, ay, bx, by):
+    """(distance, t) from point to segment, t in [0,1] along the segment."""
+    dx, dy = bx - ax, by - ay
+    L2 = dx * dx + dy * dy
+    if L2 == 0:
+        return math.hypot(px - ax, py - ay), 0.0
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy)), t
+
+
+def build_network(built, names_by_layer):
+    lat0 = 29.178
+    to_m = _proj(lat0)
+
+    # Line features carry no System attribute of their own -- it comes from the
+    # layer they belong to, and is only stamped onto the properties later when
+    # the GeoJSON is written. Look it up from the layer config here so traced
+    # results are labelled with a real system instead of always reading "mixed".
+    layer_system = {c["id"]: c.get("system", "") for c in LAYERS}
+    def sys_of(lid, f):
+        return (f["props"].get("System") or "").strip() or layer_system.get(lid, "")
+
+    # --- closing devices and fittings, with the display names already assigned
+    devices = []
+    for lid in CLOSING_LAYERS + FITTING_LAYERS:
+        for (label, _src), f in zip(names_by_layer.get(lid, []), built.get(lid, [])):
+            lon, lat = rep_point(f["geom"])
+            devices.append({
+                "layer": lid, "name": label, "lon": lon, "lat": lat,
+                "closes": lid in CLOSING_LAYERS,
+                "system": sys_of(lid, f),
+                "photos": list(f.get("photos_web") or []),
+            })
+
+    nodes = []          # {lon, lat, x, y, devs: [device indices]}
+    def node_at(lon, lat, devlist=()):
+        """Find or create the junction node at this position.
+
+        A node can hold several devices, because one physical fitting is often
+        recorded in two layers -- the Cut-Offs layer is literally "Cut-Offs /
+        Valve Boxes", so a valve and the box it sits in are two records at the
+        same spot. Those must share a junction or the network fragments there.
+
+        But two devices that are merely NEAR each other stay separate: cut-offs
+        on this ranch genuinely sit ~2 m apart, and collapsing those would drop
+        one from the graph and under-report the valves needed to isolate a line.
+        CO_LOCATED_M is the line between "same fitting" and "two fittings".
+
+        A plain endpoint still snaps onto a nearby device node regardless --
+        that is just the pipe ending at the valve.
+        """
+        x, y = to_m(lon, lat)
+        devlist = list(devlist)
+        for i, n in enumerate(nodes):
+            d = math.hypot(n["x"] - x, n["y"] - y)
+            if d > SNAP_M:
+                continue
+            fresh = [dv for dv in devlist if dv not in n["devs"]]
+            if fresh and n["devs"] and d > CO_LOCATED_M:
+                continue
+            n["devs"].extend(fresh)
+            return i
+        nodes.append({"lon": lon, "lat": lat, "x": x, "y": y, "devs": devlist})
+        return len(nodes) - 1
+
+    edges = []
+    for lid in WATER_LINE_LAYERS:
+        feats = built.get(lid, [])
+        labels = names_by_layer.get(lid, [])
+        for (label, _src), f in zip(labels, feats):
+            coords = f["geom"]["coordinates"]
+            if len(coords) < 2:
+                continue
+            pm = [to_m(c[0], c[1]) for c in coords]
+
+            # Cumulative distance to each vertex, so a device's projection can be
+            # expressed as one scalar along the whole polyline and the splits
+            # sorted without worrying about which segment they landed on.
+            cum = [0.0]
+            for i in range(1, len(pm)):
+                cum.append(cum[-1] + math.hypot(pm[i][0] - pm[i - 1][0], pm[i][1] - pm[i - 1][1]))
+            total = cum[-1]
+
+            splits = []     # (distance along line, device index)
+            for di, d in enumerate(devices):
+                dx, dy = to_m(d["lon"], d["lat"])
+                best = None
+                for i in range(1, len(pm)):
+                    dist, t = _pt_seg(dx, dy, pm[i - 1][0], pm[i - 1][1], pm[i][0], pm[i][1])
+                    if best is None or dist < best[0]:
+                        seg_len = cum[i] - cum[i - 1]
+                        best = (dist, cum[i - 1] + t * seg_len)
+                if best and best[0] <= DEVICE_ON_LINE_M:
+                    splits.append((best[1], di))
+            splits.sort()
+
+            # Cut points along the line, each carrying EVERY device that lands
+            # there. Devices are merged into a shared cut when they project to
+            # within CUT_MERGE_M of each other, and clamped onto the endpoints
+            # when they land at either end.
+            #
+            # Merging is what makes this correct: three cut-offs on this ranch
+            # project to within 0.1 m of each other on one line, and treating
+            # them as three separate cuts produced sub-edges too short to keep,
+            # which silently dropped two of them out of the network entirely.
+            CUT_MERGE_M = 1.0
+            cut_devs = {0.0: [], total: []}
+            for dist, di in splits:
+                if dist <= CUT_MERGE_M:
+                    key = 0.0
+                elif dist >= total - CUT_MERGE_M:
+                    key = total
+                else:
+                    key = next((k for k in cut_devs
+                                if 0.0 < k < total and abs(k - dist) <= CUT_MERGE_M), dist)
+                cut_devs.setdefault(key, []).append(di)
+            cuts = [(d, cut_devs[d]) for d in sorted(cut_devs)]
+
+            def coords_between(d0, d1):
+                """Sub-polyline of this feature between two distances along it."""
+                out = []
+                for i in range(len(coords)):
+                    if d0 <= cum[i] <= d1:
+                        out.append([round(coords[i][0], 6), round(coords[i][1], 6)])
+                # interpolate exact endpoints so split edges meet at the device
+                def at(d):
+                    for i in range(1, len(cum)):
+                        if cum[i] >= d:
+                            seg = cum[i] - cum[i - 1]
+                            t = 0.0 if seg == 0 else (d - cum[i - 1]) / seg
+                            return [round(coords[i - 1][0] + t * (coords[i][0] - coords[i - 1][0]), 6),
+                                    round(coords[i - 1][1] + t * (coords[i][1] - coords[i - 1][1]), 6)]
+                    return [round(coords[-1][0], 6), round(coords[-1][1], 6)]
+                head, tail = at(d0), at(d1)
+                if not out or out[0] != head:
+                    out.insert(0, head)
+                if out[-1] != tail:
+                    out.append(tail)
+                return out
+
+            for k in range(len(cuts) - 1):
+                d0, devs0 = cuts[k]
+                d1, devs1 = cuts[k + 1]
+                sub = coords_between(d0, d1)
+                # Nodes are registered even when the span between two cuts is too
+                # short to keep as an edge -- dropping the span must never drop
+                # the devices sitting at its ends.
+                a = node_at(sub[0][0], sub[0][1], devs0)
+                b = node_at(sub[-1][0], sub[-1][1], devs1)
+                if a == b or d1 - d0 < 0.5:
+                    continue
+                edges.append({
+                    "a": a, "b": b, "layer": lid, "feature": label,
+                    "system": sys_of(lid, f),
+                    "len_ft": round((d1 - d0) * 3.28084),
+                    "coords": sub,
+                })
+
+    # --- connected components (union-find over edges) -----------------------
+    parent = list(range(len(nodes)))
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    def union(i, j):
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+    for e in edges:
+        union(e["a"], e["b"])
+
+    # --- bridge short survey gaps ------------------------------------------
+    # The crew digitized each run separately and the ends don't always meet, so
+    # a single unrecorded tie-in can split a main into two "systems" and make a
+    # trace look wrong. Join dangling ends that are close AND currently in
+    # different components, shortest first, one bridge per end. These edges are
+    # marked inferred so the map can label them as an assumption rather than
+    # passing them off as surveyed pipe.
+    degree = {}
+    for e in edges:
+        degree[e["a"]] = degree.get(e["a"], 0) + 1
+        degree[e["b"]] = degree.get(e["b"], 0) + 1
+    dangling = [i for i, d in degree.items() if d == 1]
+    cands = []
+    for ai in range(len(dangling)):
+        for bi in range(ai + 1, len(dangling)):
+            a, b = dangling[ai], dangling[bi]
+            d = math.hypot(nodes[a]["x"] - nodes[b]["x"], nodes[a]["y"] - nodes[b]["y"])
+            if d <= BRIDGE_M:
+                cands.append((d, a, b))
+    cands.sort()
+    used = set()
+    bridges = 0
+    for d, a, b in cands:
+        if a in used or b in used or find(a) == find(b):
+            continue
+        used.add(a); used.add(b)
+        union(a, b)
+        edges.append({
+            "a": a, "b": b, "layer": "inferred", "feature": "Inferred connection",
+            "system": "", "len_ft": round(d * 3.28084), "inferred": True,
+            "coords": [[round(nodes[a]["lon"], 6), round(nodes[a]["lat"], 6)],
+                       [round(nodes[b]["lon"], 6), round(nodes[b]["lat"], 6)]],
+        })
+        bridges += 1
+    if bridges:
+        print(f"  bridged {bridges} survey gap(s) under {BRIDGE_M:.0f} m "
+              f"(flagged as inferred, not surveyed pipe)")
+
+    comps = {}
+    for ei, e in enumerate(edges):
+        comps.setdefault(find(e["a"]), []).append(ei)
+
+    components = []
+    for root, eidx in sorted(comps.items(), key=lambda kv: -len(kv[1])):
+        cid = len(components)
+        systems = {}
+        length = 0
+        node_ids = set()
+        for ei in eidx:
+            edges[ei]["comp"] = cid
+            length += edges[ei]["len_ft"]
+            s = edges[ei]["system"]
+            if s:
+                systems[s] = systems.get(s, 0) + edges[ei]["len_ft"]
+            node_ids.add(edges[ei]["a"]); node_ids.add(edges[ei]["b"])
+        devs = sorted({d for n in node_ids for d in nodes[n]["devs"]})
+        components.append({
+            "id": cid,
+            "system": max(systems, key=systems.get) if systems else "",
+            "systems": sorted(systems, key=systems.get, reverse=True),
+            "len_ft": length,
+            "edges": eidx,
+            "devices": devs,
+        })
+
+    out = {
+        "snap_m": SNAP_M,
+        "device_on_line_m": DEVICE_ON_LINE_M,
+        "devices": devices,
+        "nodes": [{"lon": round(n["lon"], 6), "lat": round(n["lat"], 6), "devs": n["devs"]} for n in nodes],
+        "edges": [{k: v for k, v in e.items() if k != "comp"} | {"comp": e.get("comp", -1)} for e in edges],
+        "components": components,
+    }
+
+    attached = len({d for n in nodes for d in n["devs"]})
+    closing = sum(1 for d in devices if d["closes"])
+    print(f"  network: {len(nodes)} junctions, {len(edges)} segments, "
+          f"{len(components)} connected systems")
+    print(f"           {attached} of {len(devices)} assets sit on the network "
+          f"({closing} of which can close)")
+    for c in components[:6]:
+        print(f"           system {c['id']}: {c['len_ft']:>6,} ft, {len(c['edges']):>3} segments, "
+              f"{len(c['devices']):>2} assets  [{c['system'] or 'mixed'}]")
+    if len(components) > 6:
+        print(f"           ... and {len(components) - 6} smaller disconnected runs")
+    return out
+
+
 # -------------------------------------------------------------------- aerial
 def build_aerial():
     """Re-emit the KML GroundOverlays as PNG + LatLonBox bounds."""
@@ -778,6 +1081,14 @@ def main():
     print("Processing photos...")
     photos = build_photos(built)
 
+    # Names are assigned once, up front: the network build labels its junctions
+    # and valves with exactly the same names the GeoJSON and search index use,
+    # so a traced result and a search hit always refer to the same asset.
+    names_by_layer = {cfg["id"]: name_layer(cfg, built[cfg["id"]]) for cfg in LAYERS}
+
+    print("Deriving pipe network...")
+    network = build_network(built, names_by_layer)
+
     print("Extracting aerial imagery...")
     aerial = build_aerial()
 
@@ -786,7 +1097,7 @@ def main():
     catalog = []
     for cfg in LAYERS:
         feats = built[cfg["id"]]
-        names = name_layer(cfg, feats)
+        names = names_by_layer[cfg["id"]]
         gj = {"type": "FeatureCollection", "features": []}
         for (label, name_src), f in zip(names, feats):
             props = clean_props(f["props"])
@@ -854,6 +1165,8 @@ def main():
         json.dumps(search, separators=(",", ":")), encoding="utf-8")
     (OUT_DATA / "photos.json").write_text(
         json.dumps(photos, indent=1), encoding="utf-8")
+    (OUT_DATA / "network.json").write_text(
+        json.dumps(network, separators=(",", ":")), encoding="utf-8")
 
     # Map extent from every feature actually built.
     lats = [s["lat"] for s in search]

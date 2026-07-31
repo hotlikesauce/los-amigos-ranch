@@ -54,6 +54,9 @@
   // bright line colors legible against both the pale topo sheet and the busy
   // aerial -- the standard casing treatment, done once per pane instead of by
   // drawing every line twice.
+  // Trace highlight sits UNDER the water lines so it reads as a glow behind the
+  // pipe rather than painting over its colour.
+  map.createPane("traceGlow");    map.getPane("traceGlow").style.zIndex = 412;
   map.createPane("waterlines");   map.getPane("waterlines").style.zIndex = 415;
   map.getPane("waterlines").classList.add("water-line-pane");
   map.createPane("points");       map.getPane("points").style.zIndex = 420;
@@ -413,7 +416,25 @@
             '<img loading="lazy" src="photos/thumb/' + encodeURIComponent(p) + '" alt="' + esc(photoTitle(p)) + '"></button>';
         }).join("") + "</div>";
     }
-    return head + '<div class="popup-bd">' + (rows || '<div class="popup-row"><span class="v" style="color:#8a94a3">No recorded attributes.</span></div>') + pv + "</div>";
+    // Water mains get the two network questions attached directly to the
+    // feature, which is where a user is already looking when they ask them.
+    var actions = "";
+    if (WATER_LINES[cfg.id] && props.name) {
+      actions =
+        '<div class="popup-actions">' +
+        '<button type="button" class="primary" data-trace="' + esc(props.name) + '">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M4 7h6l4 10h6"/><circle cx="4" cy="7" r="1.6"/><circle cx="20" cy="17" r="1.6"/></svg>' +
+        "Trace system</button>" +
+        '<button type="button" data-isolate="' + esc(props.name) + '">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
+        '<circle cx="12" cy="12" r="8"/><path d="M12 4v16"/></svg>' +
+        "Isolate</button></div>";
+    }
+
+    return head + '<div class="popup-bd">' +
+      (rows || '<div class="popup-row"><span class="v" style="color:#8a94a3">No recorded attributes.</span></div>') +
+      pv + actions + "</div>";
   }
 
   function photoTitle(file) {
@@ -501,6 +522,335 @@
       e.preventDefault();
       lb.open(b.getAttribute("data-photo"), (b.getAttribute("data-set") || "").split("|").filter(Boolean));
     });
+  }
+
+  // ------------------------------------------------------------ pipe network
+  // network.json is the pipe graph derived from the line geometry by
+  // build_data.py: junctions, segments split at every valve/cut-off, and the
+  // connected components those form. It answers the two questions this map
+  // exists for -- "what else is on this line?" and "which valves shut it off?".
+  var NET = null;
+  var netAdj = null;        // node id -> [[edge id, other node id], ...]
+  var netClosing = null;    // set of node ids carrying a device that can close
+  var traceLayer = L.layerGroup();
+  var traceMode = null;     // "system" | "isolate"
+
+  function initNetwork(net) {
+    NET = net;
+    netAdj = {};
+    netClosing = {};
+    net.edges.forEach(function (e, ei) {
+      (netAdj[e.a] = netAdj[e.a] || []).push([ei, e.b]);
+      (netAdj[e.b] = netAdj[e.b] || []).push([ei, e.a]);
+    });
+    net.nodes.forEach(function (n, ni) {
+      if ((n.devs || []).some(function (d) { return net.devices[d].closes; })) netClosing[ni] = 1;
+    });
+    traceLayer.addTo(map);
+  }
+
+  function edgesOfFeature(featureName) {
+    var out = [];
+    NET.edges.forEach(function (e, ei) { if (e.feature === featureName) out.push(ei); });
+    return out;
+  }
+
+  // Everything hydraulically continuous with this line: its whole connected
+  // component, ignoring whether valves along the way happen to be shut.
+  function traceSystem(featureName) {
+    var seed = edgesOfFeature(featureName);
+    if (!seed.length) return null;
+    var comp = NET.components[NET.edges[seed[0]].comp];
+    if (!comp) return null;
+    var devs = comp.devices.map(function (d) { return NET.devices[d]; });
+    return {
+      kind: "system",
+      edges: comp.edges,
+      devices: devs.map(function (d, i) { return { dev: d, idx: comp.devices[i] }; }),
+      len_ft: comp.len_ft,
+      systems: comp.systems,
+      comp: comp.id
+    };
+  }
+
+  // The valves that isolate this run: walk outward from the clicked line and
+  // stop at the first closing device on every branch. Deliberately NOT
+  // "upstream/downstream" -- the survey records no flow direction, so naming a
+  // direction would be inventing information. This set is what you actually
+  // need to close, in any direction.
+  function isolate(featureName) {
+    var seed = edgesOfFeature(featureName);
+    if (!seed.length) return null;
+    var affected = {};
+    var frontier = [];
+    seed.forEach(function (ei) {
+      affected[ei] = 1;
+      frontier.push(NET.edges[ei].a, NET.edges[ei].b);
+    });
+    var valves = {}, seenNode = {};
+    while (frontier.length) {
+      var nd = frontier.pop();
+      if (seenNode[nd]) continue;
+      seenNode[nd] = 1;
+      if (netClosing[nd]) {
+        (NET.nodes[nd].devs || []).forEach(function (d) {
+          if (NET.devices[d].closes) valves[d] = nd;
+        });
+        continue;          // a shut valve stops the water here
+      }
+      (netAdj[nd] || []).forEach(function (pair) {
+        if (affected[pair[0]]) return;
+        affected[pair[0]] = 1;
+        frontier.push(pair[1]);
+      });
+    }
+    var ids = Object.keys(valves).map(Number);
+    var len = 0;
+    Object.keys(affected).forEach(function (ei) { len += NET.edges[ei].len_ft; });
+    return {
+      kind: "isolate",
+      edges: Object.keys(affected).map(Number),
+      valves: ids.map(function (d) { return { dev: NET.devices[d], idx: d, node: valves[d] }; }),
+      len_ft: len
+    };
+  }
+
+  function clearTrace() {
+    traceLayer.clearLayers();
+    traceMode = null;
+    document.getElementById("trace-pane").classList.remove("open");
+  }
+
+  function drawTrace(res) {
+    traceLayer.clearLayers();
+    var glow = res.kind === "isolate" ? "#e03131" : "#ffd21f";
+    res.edges.forEach(function (ei) {
+      var e = NET.edges[ei];
+      var latlngs = e.coords.map(function (c) { return [c[1], c[0]]; });
+      L.polyline(latlngs, {
+        color: glow, weight: 11, opacity: 0.42, lineCap: "round",
+        lineJoin: "round", pane: "traceGlow", interactive: false,
+        dashArray: e.inferred ? "10,8" : null
+      }).addTo(traceLayer);
+    });
+    // Numbered pins on the isolation valves so the list maps onto the map.
+    (res.valves || []).forEach(function (v, i) {
+      var n = NET.nodes[v.node];
+      L.marker([n.lat, n.lon], {
+        pane: "emphasis", keyboard: false,
+        icon: L.divIcon({
+          className: "shape-marker",
+          html: '<div class="iso-badge" style="width:22px;height:22px">' + (i + 1) + "</div>",
+          iconSize: [22, 22], iconAnchor: [11, 11]
+        })
+      }).addTo(traceLayer);
+    });
+  }
+
+  function fitTrace(res) {
+    var pts = [];
+    res.edges.forEach(function (ei) {
+      NET.edges[ei].coords.forEach(function (c) { pts.push([c[1], c[0]]); });
+    });
+    if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [70, 70], maxZoom: 17 });
+  }
+
+  var LAYER_TITLE = {};   // layer id -> title, filled once layers.json is in
+
+  function traceRowHtml(d, n) {
+    var color = colorFor(d.layer);
+    var badge = n != null ? '<span class="num">' + n + "</span>"
+                          : '<span class="sw" style="background:' + color + '"></span>';
+    return badge + '<span class="nm">' + esc(d.name) +
+      "<small>" + esc(LAYER_TITLE[d.layer] || d.layer) +
+      (d.system ? " &middot; " + esc(d.system) : "") + "</small></span>" +
+      (d.photos && d.photos.length
+        ? '<span class="cam" title="' + d.photos.length + ' photo(s)">' +
+          '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+          '<rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3.5"/></svg>' +
+          d.photos.length + "</span>"
+        : "");
+  }
+
+  function showTrace(res, featureName) {
+    var pane = document.getElementById("trace-pane");
+    var body = document.getElementById("trace-body");
+    document.getElementById("trace-title").textContent =
+      res.kind === "isolate" ? "Isolation valves" : "Connected system";
+    document.getElementById("trace-sub").textContent = featureName;
+
+    var html = "";
+    if (res.kind === "isolate") {
+      var v = res.valves;
+      html += '<div class="trace-stats">' +
+        '<div class="trace-stat"><div class="v">' + v.length + '</div><div class="l">Valves to close</div></div>' +
+        '<div class="trace-stat"><div class="v">' + res.edges.length + '</div><div class="l">Segments</div></div>' +
+        '<div class="trace-stat"><div class="v">' + Math.round(res.len_ft / 100) / 10 +
+          'k</div><div class="l">Feet affected</div></div>' +
+        "</div>";
+      html += '<div class="trace-note">Closing these ' + v.length +
+        (v.length === 1 ? " device" : " devices") +
+        " cuts water to the highlighted run. Walked outward from this line and stopped at the first device that can close on every branch." +
+        "</div>";
+      if (!v.length) {
+        html += '<div class="trace-note warn">No closing device was found on any branch out of this run &mdash; ' +
+          "the survey records no valve or cut-off that would isolate it.</div>";
+      }
+      html += '<div class="trace-sec">Close these, in no particular order</div>';
+      v.forEach(function (x, i) {
+        html += '<div class="trace-row" data-layer="' + esc(x.dev.layer) + '" data-name="' +
+          esc(x.dev.name) + '">' + traceRowHtml(x.dev, i + 1) + "</div>";
+      });
+    } else {
+      var closing = res.devices.filter(function (x) { return x.dev.closes; });
+      html += '<div class="trace-stats">' +
+        '<div class="trace-stat"><div class="v">' + (Math.round(res.len_ft / 100) / 10) +
+          'k</div><div class="l">Feet of pipe</div></div>' +
+        '<div class="trace-stat"><div class="v">' + res.edges.length + '</div><div class="l">Segments</div></div>' +
+        '<div class="trace-stat"><div class="v">' + res.devices.length + '</div><div class="l">Assets</div></div>' +
+        "</div>";
+      html += '<div class="trace-note">Everything physically connected to this line' +
+        (res.systems && res.systems.length > 1
+          ? ". This run carries " + res.systems.map(esc).join(" + ") +
+            " water &mdash; the systems are tied together here."
+          : ".") + "</div>";
+      var inferred = res.edges.filter(function (ei) { return NET.edges[ei].inferred; }).length;
+      if (inferred) {
+        html += '<div class="trace-note warn">' + inferred + " connection" + (inferred > 1 ? "s in" : " in") +
+          " this trace " + (inferred > 1 ? "are" : "is") + " inferred: the survey left a gap of a few metres " +
+          "between line ends, shown dashed. Verify before relying on it.</div>";
+      }
+      html += '<div class="trace-sec">' + closing.length + " valves &amp; cut-offs on this system</div>";
+      closing.forEach(function (x) {
+        html += '<div class="trace-row" data-layer="' + esc(x.dev.layer) + '" data-name="' +
+          esc(x.dev.name) + '">' + traceRowHtml(x.dev) + "</div>";
+      });
+      var fittings = res.devices.filter(function (x) { return !x.dev.closes; });
+      if (fittings.length) {
+        html += '<div class="trace-sec">' + fittings.length + " other fittings</div>";
+        fittings.forEach(function (x) {
+          html += '<div class="trace-row" data-layer="' + esc(x.dev.layer) + '" data-name="' +
+            esc(x.dev.name) + '">' + traceRowHtml(x.dev) + "</div>";
+        });
+      }
+    }
+    body.innerHTML = html;
+    Array.prototype.forEach.call(body.querySelectorAll(".trace-row"), function (row) {
+      row.onclick = function () {
+        focusAsset(row.getAttribute("data-layer"), row.getAttribute("data-name"));
+      };
+    });
+    pane.classList.add("open");
+    traceMode = res.kind;
+    drawTrace(res);
+    fitTrace(res);
+  }
+
+  // Jump to a named asset in a named layer, reusing the search index so the
+  // behaviour (reveal layer, zoom, open popup, glow) is identical to searching.
+  function focusAsset(layerId, name) {
+    var hit = null;
+    for (var i = 0; i < index.length; i++) {
+      if (index[i].id === layerId && index[i].label === name) { hit = index[i]; break; }
+    }
+    if (hit) goTo(hit, { keepTrace: true });
+  }
+
+  // ------------------------------------------------------------------ gallery
+  // Every survey photo in one grid. Without this the photos are only reachable
+  // by finding the right marker on the map, which is backwards when the photo
+  // is the thing you remember and the location is what you're trying to recall.
+  var galFilter = "all";
+
+  function galleryPhotos() {
+    var all = Object.keys(photoMeta).map(function (k) { return photoMeta[k]; });
+    all.sort(function (a, b) { return String(a.title).localeCompare(String(b.title)); });
+    if (galFilter === "all") return all;
+    return all.filter(function (p) { return (p.layer || "") === galFilter; });
+  }
+
+  function renderGallery() {
+    var grid = document.getElementById("gal-grid");
+    var list = galleryPhotos();
+    document.getElementById("gal-count").textContent =
+      list.length + " of " + Object.keys(photoMeta).length;
+    if (!list.length) {
+      grid.innerHTML = '<div class="gal-empty">No photos on that asset type.</div>';
+      return;
+    }
+    var files = list.map(function (p) { return p.file; });
+    grid.innerHTML = list.map(function (p) {
+      return '<button type="button" class="gal-item" data-file="' + esc(p.file) + '">' +
+        '<img loading="lazy" src="photos/thumb/' + encodeURIComponent(p.file) +
+        '" alt="' + esc(p.title) + '">' +
+        '<span class="gal-cap">' + esc(p.title) +
+        "<small>" + esc(LAYER_TITLE[p.layer] || "Unmatched") +
+        (p.date ? " &middot; " + esc(p.date) : "") + "</small></span></button>";
+    }).join("");
+    Array.prototype.forEach.call(grid.querySelectorAll(".gal-item"), function (b) {
+      b.onclick = function () { lb.open(b.getAttribute("data-file"), files); };
+    });
+  }
+
+  function buildGalleryFilters() {
+    var counts = {};
+    Object.keys(photoMeta).forEach(function (k) {
+      var l = photoMeta[k].layer || "";
+      counts[l] = (counts[l] || 0) + 1;
+    });
+    var wrap = document.getElementById("gal-filter");
+    var opts = [["all", "All"]].concat(
+      Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; })
+        .map(function (l) { return [l, (LAYER_TITLE[l] || "Unmatched") + " (" + counts[l] + ")"]; }));
+    wrap.innerHTML = opts.map(function (o) {
+      return '<button type="button" class="gal-chip' + (o[0] === galFilter ? " active" : "") +
+        '" data-f="' + esc(o[0]) + '">' + esc(o[1]) + "</button>";
+    }).join("");
+    Array.prototype.forEach.call(wrap.querySelectorAll(".gal-chip"), function (c) {
+      c.onclick = function () {
+        galFilter = c.getAttribute("data-f");
+        Array.prototype.forEach.call(wrap.querySelectorAll(".gal-chip"), function (x) {
+          x.classList.toggle("active", x === c);
+        });
+        renderGallery();
+      };
+    });
+  }
+
+  function openGallery() {
+    buildGalleryFilters();
+    renderGallery();
+    document.getElementById("gallery").classList.add("open");
+  }
+  function closeGallery() { document.getElementById("gallery").classList.remove("open"); }
+
+  function initGallery() {
+    document.getElementById("gallery-btn").onclick = openGallery;
+    document.getElementById("gal-close").onclick = closeGallery;
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !lb.el.classList.contains("open")) closeGallery();
+    });
+    // "Show on map" jumps from a photo to the asset it belongs to.
+    document.getElementById("lb-locate").onclick = function () {
+      var file = lb.set[lb.i];
+      var m = photoMeta[file];
+      lb.close();
+      closeGallery();
+      if (!m) return;
+      if (m.layer) {
+        // Prefer the asset the photo documents; fall back to the photo point.
+        var owner = null;
+        for (var i = 0; i < index.length; i++) {
+          if (index[i].id === m.layer &&
+              Math.abs(index[i].lat - m.lat) < 0.0009 &&
+              Math.abs(index[i].lon - m.lon) < 0.0009) { owner = index[i]; break; }
+        }
+        if (owner) { goTo(owner); return; }
+      }
+      var cfg = state.photos && state.photos.cfg;
+      if (cfg) showLayer(cfg, true);
+      map.setView([m.lat, m.lon], Math.max(map.getZoom(), 18));
+    };
   }
 
   // ----------------------------------------------------------- water filter
@@ -863,10 +1213,13 @@
   // is currently switched off -- otherwise clicking a result would appear to do
   // nothing at all.
   var focused = null;
-  function goTo(hit) {
+  function goTo(hit, opts) {
     if (!hit) return;
     var cfg = state[hit.id] && state[hit.id].cfg;
     if (!cfg) return;
+    // A fresh search is a new line of enquiry, so it drops any active trace --
+    // but clicking through a trace result's own list must keep it on screen.
+    if (!(opts && opts.keepTrace)) clearTrace();
     showLayer(cfg, true);
     // A system filter that excludes the hit would hide it on arrival.
     if (activeSystem && hit.system && hit.system !== activeSystem) {
@@ -948,6 +1301,38 @@
       if (window.innerWidth > 860) setPanel(false);
     });
     closePanel = function () { setPanel(false); };
+
+    document.getElementById("trace-close").onclick = clearTrace;
+
+    // Popup content is rebuilt on every open, so the trace/isolate buttons are
+    // handled by one delegated listener rather than per-popup handlers.
+    document.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest("[data-trace],[data-isolate]");
+      if (!b || !NET) return;
+      e.preventDefault();
+      var isIso = b.hasAttribute("data-isolate");
+      var name = b.getAttribute(isIso ? "data-isolate" : "data-trace");
+      var res = isIso ? isolate(name) : traceSystem(name);
+      map.closePopup();
+      if (!res) {
+        showNoNetwork(name, isIso);
+        return;
+      }
+      showTrace(res, name);
+    });
+  }
+
+  // A line that never made it into the graph (too far from any junction) still
+  // has to say so, rather than the button appearing to do nothing.
+  function showNoNetwork(name, isIso) {
+    document.getElementById("trace-title").textContent = isIso ? "Isolation valves" : "Connected system";
+    document.getElementById("trace-sub").textContent = name;
+    document.getElementById("trace-body").innerHTML =
+      '<div class="trace-empty">This line isn\'t connected to the derived pipe network, so there\'s ' +
+      "nothing to " + (isIso ? "isolate" : "trace") + " from it.<br><br>The network is built from where " +
+      "surveyed line ends meet, and this run's ends don't reach another line.</div>";
+    document.getElementById("trace-pane").classList.add("open");
+    traceLayer.clearLayers();
   }
   // Set by initChrome; used by search navigation to get the drawer out of the
   // way once the user has picked a result.
@@ -974,11 +1359,19 @@
     Promise.all([
       fetchJson("layers.json"),
       fetchJson("data/search_index.json"),
-      fetchJson("data/photos.json")
+      fetchJson("data/photos.json"),
+      // The pipe graph is small (~37 KB) and both network features need it the
+      // instant a popup opens, so it loads up front rather than on demand.
+      fetchJson("data/network.json").catch(function (e) {
+        console.warn("Pipe network unavailable; trace/isolate disabled.", e);
+        return null;
+      })
     ]).then(function (out) {
       CFG = out[0];
       index = out[1];
       (out[2] || []).forEach(function (p) { photoMeta[p.file] = p; });
+      CFG.layers.forEach(function (l) { LAYER_TITLE[l.id] = l.title; });
+      if (out[3]) initNetwork(out[3]);
 
       document.title = CFG.title || "Los Amigos Ranch";
       var bt = document.querySelector(".banner-title");
@@ -1006,6 +1399,7 @@
       buildLayerPanel();
       buildSearch();
       initLightbox();
+      initGallery();
       initChrome();
       updateLabelZoom();
       applyZoomScaling();

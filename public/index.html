@@ -310,6 +310,135 @@
     font-size: 12px; font-variant-numeric: tabular-nums;
   }
 
+  /* ---- Trace / isolation results pane (right edge) ---- */
+  #trace-pane {
+    position: absolute; top: 0; right: 0; bottom: 0; width: 320px; max-width: 92vw;
+    background: var(--card); border-left: 1px solid var(--border); z-index: 520;
+    display: flex; flex-direction: column;
+    transform: translateX(101%); transition: transform .22s ease;
+    box-shadow: -8px 0 28px rgba(10,35,66,.22);
+  }
+  #trace-pane.open { transform: translateX(0); }
+  .trace-hd {
+    background: linear-gradient(135deg, #0a2342 0%, #1a6ab5 100%); color: #fff;
+    padding: 11px 14px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  }
+  .trace-hd .t { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; }
+  .trace-hd .t small { display: block; font-weight: 500; font-size: 10.5px; opacity: .8; margin-top: 1px; }
+  .trace-close {
+    border: none; background: none; color: #fff; font-size: 21px; line-height: 1;
+    cursor: pointer; opacity: .85; padding: 0 3px;
+  }
+  .trace-close:hover { opacity: 1; }
+  #trace-body { flex: 1; overflow-y: auto; }
+  .trace-stats { display: flex; border-bottom: 1px solid var(--border); background: var(--bg); }
+  .trace-stat { flex: 1; padding: 10px 8px; text-align: center; border-right: 1px solid var(--border); }
+  .trace-stat:last-child { border-right: none; }
+  .trace-stat .v { font-size: 1.15rem; font-weight: 700; color: var(--navy); line-height: 1.1; }
+  .trace-stat .l { font-size: .58rem; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-top: 3px; }
+  .trace-note {
+    padding: 9px 14px; font-size: 11.5px; color: #46505e; background: #f4f7fb;
+    border-bottom: 1px solid var(--border); line-height: 1.45;
+  }
+  .trace-note.warn { background: #fff6e5; color: #6b4c12; }
+  .trace-sec {
+    padding: 8px 14px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); font-weight: 700; background: var(--bg);
+    border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  }
+  .trace-row {
+    display: flex; align-items: center; gap: 9px; padding: 9px 14px; cursor: pointer;
+    border-bottom: 1px solid var(--border); font-size: 12.5px;
+  }
+  .trace-row:hover { background: var(--row-hover); }
+  .trace-row .sw { width: 11px; height: 11px; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,.2); }
+  .trace-row .nm { flex: 1; min-width: 0; }
+  .trace-row .nm small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 1px; }
+  .trace-row .cam { flex: none; color: var(--muted); display: flex; align-items: center; gap: 2px; font-size: 10.5px; }
+  .trace-empty { padding: 16px 14px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+  /* isolation valves get a numbered marker so the list maps onto the map */
+  .trace-row .num {
+    flex: none; width: 19px; height: 19px; border-radius: 50%; background: #e03131; color: #fff;
+    font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+  }
+  .iso-badge {
+    background: #e03131; color: #fff; border: 2px solid #fff; border-radius: 50%;
+    font: 700 11px/1 -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 1px 5px rgba(0,0,0,.45);
+  }
+
+  /* popup action buttons (trace / isolate) */
+  .popup-actions { display: flex; gap: 6px; margin-top: 9px; }
+  .popup-actions button {
+    flex: 1; padding: 7px 6px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--border); background: #fff; color: var(--navy); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+  }
+  .popup-actions button:hover { background: var(--row-hover); border-color: var(--accent); }
+  .popup-actions .primary {
+    background: linear-gradient(135deg, #0a2342 0%, #1a6ab5 100%); color: #fff; border-color: var(--navy);
+  }
+  .popup-actions .primary:hover { filter: brightness(1.08); }
+
+  /* ---- Photo gallery ---- */
+  #gallery {
+    position: fixed; inset: 0; z-index: 2500; background: rgba(8,20,34,.90);
+    display: none; flex-direction: column;
+  }
+  #gallery.open { display: flex; }
+  .gal-hd {
+    flex: none; display: flex; align-items: center; gap: 14px; padding: 14px 20px;
+    color: #fff; border-bottom: 1px solid rgba(255,255,255,.14);
+  }
+  .gal-hd .t { font-size: 15px; font-weight: 700; }
+  .gal-hd .t small { font-weight: 400; opacity: .6; margin-left: 8px; font-size: 12px; }
+  .gal-filter { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  .gal-chip {
+    padding: 5px 12px; border-radius: 14px; font-size: 12px; cursor: pointer;
+    border: 1.5px solid rgba(255,255,255,.3); background: transparent; color: rgba(255,255,255,.8);
+  }
+  .gal-chip:hover { border-color: rgba(255,255,255,.7); color: #fff; }
+  .gal-chip.active { background: #fff; border-color: #fff; color: var(--navy); font-weight: 600; }
+  .gal-close {
+    border: 1px solid rgba(255,255,255,.3); background: rgba(255,255,255,.1); color: #fff;
+    width: 34px; height: 34px; border-radius: 8px; cursor: pointer; font-size: 20px; line-height: 1;
+    display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  .gal-close:hover { background: rgba(255,255,255,.22); }
+  #gal-grid {
+    flex: 1; overflow-y: auto; padding: 18px 20px 28px;
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    align-content: start;
+  }
+  .gal-item {
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 9px; overflow: hidden; cursor: pointer; padding: 0; text-align: left;
+    display: flex; flex-direction: column;
+  }
+  .gal-item:hover { border-color: rgba(255,255,255,.5); background: rgba(255,255,255,.12); }
+  .gal-item img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; background: #22303f; }
+  .gal-cap { padding: 8px 10px 10px; color: #fff; font-size: 12px; font-weight: 600; }
+  .gal-cap small { display: block; font-weight: 400; color: rgba(255,255,255,.55); font-size: 10.5px; margin-top: 2px; }
+  .gal-empty { color: rgba(255,255,255,.6); padding: 30px; grid-column: 1 / -1; text-align: center; }
+  /* "Show on map" in the lightbox bar */
+  .lb-actions { margin-top: 9px; display: flex; gap: 8px; justify-content: center; }
+  .lb-actions button {
+    border: 1px solid rgba(255,255,255,.3); background: rgba(255,255,255,.1); color: #fff;
+    border-radius: 7px; padding: 6px 14px; font-size: 12px; cursor: pointer; font-weight: 600;
+  }
+  .lb-actions button:hover { background: rgba(255,255,255,.24); }
+
+  /* banner action buttons (gallery) */
+  .banner-btn {
+    flex: none; display: flex; align-items: center; gap: 7px;
+    background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.35);
+    border-radius: 8px; padding: 9px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    white-space: nowrap;
+  }
+  .banner-btn:hover { background: rgba(255,255,255,0.22); }
+
   /* ---- live cursor lat/lng + scale readouts ---- */
   .coord-box, .scale-box {
     background: rgba(255,255,255,.9); color: #1a2332; border: 1px solid var(--border);
@@ -518,6 +647,12 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
+      <button class="banner-btn" id="gallery-btn" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="5" width="20" height="15" rx="2"/><circle cx="12" cy="12.5" r="3.6"/>
+          <path d="M8 5l1.3-2h5.4L16 5"/></svg>
+        <span>Photos</span>
+      </button>
       <div class="banner-search" id="banner-search">
         <span class="s-icon">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
@@ -550,7 +685,23 @@
     </div>
     <div id="panel-backdrop"></div>
     <div id="map"></div>
+    <aside id="trace-pane" aria-live="polite">
+      <div class="trace-hd">
+        <div class="t"><span id="trace-title">Trace</span><small id="trace-sub"></small></div>
+        <button class="trace-close" id="trace-close" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div id="trace-body"></div>
+    </aside>
   </div>
+</div>
+
+<div id="gallery">
+  <div class="gal-hd">
+    <div class="t">Survey Photos<small id="gal-count"></small></div>
+    <div class="gal-filter" id="gal-filter"></div>
+    <button class="gal-close" id="gal-close" type="button" aria-label="Close">&times;</button>
+  </div>
+  <div id="gal-grid"></div>
 </div>
 
 <div id="lightbox">
@@ -564,6 +715,7 @@
   <div class="lb-bar">
     <div class="lb-title" id="lb-title"></div>
     <div class="lb-meta" id="lb-meta"></div>
+    <div class="lb-actions"><button type="button" id="lb-locate">Show on map</button></div>
   </div>
 </div>
 
