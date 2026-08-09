@@ -10,6 +10,11 @@
 (function () {
   "use strict";
 
+  // Analytics, if analytics.js loaded. Stubbed rather than guarded at each call
+  // site so an ad blocker eating the file is a no-op, not a ReferenceError.
+  var track = window.track || function () {};
+  if (!track.later) { track.later = function () {}; track.cancel = function () {}; }
+
   var CFG = null;        // layers.json
   var state = {};        // layer id -> { cfg, layer, loaded, loading, byLabel, subs }
   var index = [];        // search index
@@ -460,11 +465,17 @@
   // --------------------------------------------------------------- lightbox
   var lb = {
     el: null, img: null, set: [], i: 0,
-    open: function (file, set) {
+    open: function (file, set, src) {
       this.set = set && set.length ? set : [file];
       this.i = Math.max(0, this.set.indexOf(file));
       this.el.classList.add("open");
       this.render();
+      track("photo_view", {
+        photo: file,
+        photo_title: photoTitle(file),
+        source: src || "popup",
+        set_size: this.set.length
+      });
     },
     close: function () { this.el.classList.remove("open"); this.img.src = ""; },
     step: function (d) {
@@ -535,7 +546,8 @@
       var b = e.target.closest && e.target.closest(".popup-photo");
       if (!b) return;
       e.preventDefault();
-      lb.open(b.getAttribute("data-photo"), (b.getAttribute("data-set") || "").split("|").filter(Boolean));
+      lb.open(b.getAttribute("data-photo"),
+        (b.getAttribute("data-set") || "").split("|").filter(Boolean), "popup");
     });
   }
 
@@ -609,6 +621,10 @@
     // the single-feature popup by now. Closing and reopening happens in one
     // synchronous tick, so the swap is never painted.
     map.closePopup();
+    track("stack_open", {
+      count: hits.length,
+      layers: hits.map(function (h) { return h.cfg.title; }).join(", ")
+    });
     openStackPopup(hits, e.latlng);
   }
 
@@ -917,6 +933,7 @@
     for (var i = 0; i < index.length; i++) {
       if (index[i].id === layerId && index[i].label === name) { hit = index[i]; break; }
     }
+    track("trace_locate", { feature: name, layer: LAYER_TITLE[layerId] || layerId, found: !!hit });
     if (hit) goTo(hit, { keepTrace: true });
   }
 
@@ -952,7 +969,7 @@
         (p.date ? " &middot; " + esc(p.date) : "") + "</small></span></button>";
     }).join("");
     Array.prototype.forEach.call(grid.querySelectorAll(".gal-item"), function (b) {
-      b.onclick = function () { lb.open(b.getAttribute("data-file"), files); };
+      b.onclick = function () { lb.open(b.getAttribute("data-file"), files, "gallery"); };
     });
   }
 
@@ -973,6 +990,7 @@
     Array.prototype.forEach.call(wrap.querySelectorAll(".gal-chip"), function (c) {
       c.onclick = function () {
         galFilter = c.getAttribute("data-f");
+        track("gallery_filter", { filter: LAYER_TITLE[galFilter] || galFilter });
         Array.prototype.forEach.call(wrap.querySelectorAll(".gal-chip"), function (x) {
           x.classList.toggle("active", x === c);
         });
@@ -982,6 +1000,7 @@
   }
 
   function openGallery() {
+    track("gallery_open", { photos: Object.keys(photoMeta).length });
     buildGalleryFilters();
     renderGallery();
     document.getElementById("gallery").classList.add("open");
@@ -998,6 +1017,7 @@
     document.getElementById("lb-locate").onclick = function () {
       var file = lb.set[lb.i];
       var m = photoMeta[file];
+      track("photo_locate", { photo: file, photo_title: photoTitle(file) });
       lb.close();
       closeGallery();
       if (!m) return;
@@ -1055,6 +1075,7 @@
       b.innerHTML = (color ? '<span class="dot" style="background:' + color + '"></span>' : "") + esc(label);
       b.onclick = function () {
         activeSystem = value;
+        track("system_filter", { system: value || "(all)" });
         Array.prototype.forEach.call(wrap.children, function (x) { x.classList.remove("active"); });
         b.classList.add("active");
         applySystemFilter();
@@ -1090,6 +1111,15 @@
         }
         if (cfg.geometry === "point") lyr.on("click", onPointClick);
         var lv = props[cfg.label_field];
+        // On the popup rather than the click, so an asset reached by search or
+        // by a trace-result row counts the same as one clicked on the map.
+        lyr.on("popupopen", function () {
+          track("feature_open", {
+            feature: lv == null ? "(unnamed)" : String(lv),
+            layer: cfg.title,
+            system: props.System || "(none)"
+          });
+        });
         if (lv != null && !(lv in byLabel)) byLabel[String(lv)] = lyr;
         // Only label features whose name means something: one surveyed in the
         // field, or one named for its type ("Boat House 2"). The pure fallback
@@ -1186,6 +1216,7 @@
           '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
         "</button>";
       head.querySelector("input").addEventListener("change", function () {
+        track("category_toggle", { category: cat, state: this.checked ? "on" : "off" });
         setGroupVisible(cat, this.checked);
       });
       head.querySelector(".cat-collapse-btn").addEventListener("click", function () {
@@ -1216,7 +1247,12 @@
           '<span class="swatch swatch-' + shape + '" style="' + swStyle + '"></span>' +
           '<span class="nm">' + esc(l.title) + "</span>" +
           '<span class="ct">' + (l.count || 0) + "</span>";
+        // Tracked here rather than in showLayer(), which search and the photo
+        // gallery also call -- this fires only when someone ticks the box.
         row.querySelector("input").addEventListener("change", function () {
+          track("layer_toggle", {
+            layer: l.title, category: l.category, state: this.checked ? "on" : "off"
+          });
           showLayer(l, this.checked);
         });
         body.appendChild(row);
@@ -1265,6 +1301,7 @@
       var layer = null;
       row.querySelector("input").addEventListener("change", function () {
         if (!layer) layer = def.make();          // built on first use, not at boot
+        track("overlay_toggle", { overlay: def.label, state: this.checked ? "on" : "off" });
         if (this.checked) layer.addTo(map);
         else map.removeLayer(layer);
       });
@@ -1322,10 +1359,24 @@
 
     function close() { results.classList.remove("open"); activeHit = -1; }
 
+    // Both ways of choosing a result -- click and Enter -- go through here, so
+    // the event is recorded once and identically for either.
+    function pick(h) {
+      if (!h) return;
+      track("search_select", {
+        search_term: input.value.trim().toLowerCase(),
+        feature: h.label,
+        layer: h.layer,
+        system: h.system || "(none)"
+      });
+      goTo(h);
+      close();
+    }
+
     var render = debounce(function () {
       var q = input.value.trim().toLowerCase();
       wrap.classList.toggle("has-q", !!q);
-      if (!q) { close(); listEl.innerHTML = ""; return; }
+      if (!q) { track.cancel("search"); close(); listEl.innerHTML = ""; return; }
 
       var scored = [];
       for (var i = 0; i < index.length; i++) {
@@ -1339,6 +1390,11 @@
       });
       searchHits = scored.slice(0, LIMIT).map(function (x) { return x[2]; });
       activeHit = -1;
+
+      // Only the query someone stops on, not every keystroke on the way to it.
+      // Single characters match half the ranch and say nothing about intent.
+      if (q.length >= 2) track.later("search", { search_term: q, results: scored.length }, 1400);
+      else track.cancel("search");
 
       meta.textContent = scored.length.toLocaleString() +
         (scored.length === 1 ? " match" : " matches") +
@@ -1364,7 +1420,7 @@
             '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
             '<rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3.5"/></svg>' +
             h.photos + "</span>" : "");
-        el.onclick = function () { goTo(h); close(); };
+        el.onclick = function () { pick(h); };
         el.onmouseenter = function () { setActive(n, false); };
         listEl.appendChild(el);
       });
@@ -1390,8 +1446,7 @@
       else if (e.key === "ArrowUp") { e.preventDefault(); setActive(Math.max(activeHit - 1, 0), true); }
       else if (e.key === "Enter") {
         e.preventDefault();
-        goTo(searchHits[activeHit >= 0 ? activeHit : 0]);
-        close();
+        pick(searchHits[activeHit >= 0 ? activeHit : 0]);
       } else if (e.key === "Escape") { close(); input.blur(); }
     });
     clear.onclick = function () {
@@ -1448,6 +1503,7 @@
 
   // --------------------------------------------------------------- basemaps
   function swapBase(layer, btn) {
+    track("basemap_change", { basemap: layer === aerial ? "aerial" : "topographic" });
     [topo, aerial].forEach(function (l) { if (map.hasLayer(l)) map.removeLayer(l); });
     map.addLayer(layer);
     if (layer.bringToBack) layer.bringToBack();
@@ -1508,9 +1564,20 @@
       var res = isIso ? isolate(name) : traceSystem(name);
       map.closePopup();
       if (!res) {
+        // Worth counting separately: a run that isn't in the derived graph is a
+        // gap in the network build, and this says how often people hit one.
+        track(isIso ? "isolate" : "trace_system", { feature: name, result: "not_connected" });
         showNoNetwork(name, isIso);
         return;
       }
+      track(isIso ? "isolate" : "trace_system", {
+        feature: name,
+        result: "ok",
+        length_ft: Math.round(res.len_ft || 0),
+        system: isIso ? undefined : (res.systems || []).join(", "),
+        valves: isIso ? res.valves.length : undefined,
+        devices: isIso ? undefined : res.devices.length
+      });
       showTrace(res, name);
     });
   }
@@ -1618,9 +1685,21 @@
         applySystemFilter();
         applyZoomScaling();
         hideSplash();
+        // Fired once the map is actually usable, not when the HTML arrived --
+        // the pageview says someone opened it, this says they got a map.
+        track("map_ready", {
+          load_ms: Math.round(performance.now()),
+          features: featureCount,
+          layers: CFG.layers.length,
+          photos: photoCount,
+          network: !!NET,
+          aerial: !!NAIP,
+          viewport: IS_NARROW ? "narrow" : "wide"
+        });
       });
     }).catch(function (e) {
       console.error("Failed to load map configuration/data", e);
+      track("map_load_failed", { message: (e && e.message) || String(e) });
       document.getElementById("splashMessage").textContent =
         "Couldn't load the map data. See the browser console for details.";
       clearTimeout(guard);

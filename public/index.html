@@ -6,6 +6,9 @@
 <link rel="stylesheet" href="vendor/leaflet.css" />
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/html2canvas.min.js"></script>
+<!-- Google Analytics 4. Loads gtag.js and defines window.track(); skips both on
+     localhost. Must come before map_chrome.js/app.js, which call track(). -->
+<script src="analytics.js"></script>
 
 <style>
   /* Chrome, palette and panel layout follow the Jonah Operations Map so this

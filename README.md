@@ -222,9 +222,10 @@ Things worth knowing, since they shape what the map shows:
 
 The map is fully client-side, needs no environment variables, and uses only
 relative paths — so it works from a subdirectory (`/los-amigos-ranch/`) or a
-domain root without changes. It fetches Esri basemap tiles from
-`server.arcgisonline.com` at runtime; everything else (Leaflet, html2canvas, all
-data, all photos, all imagery) is served from this project.
+domain root without changes. At runtime it fetches Esri basemap tiles from
+`server.arcgisonline.com` and Google Analytics from `googletagmanager.com`;
+everything else (Leaflet, html2canvas, all data, all photos, all imagery) is
+served from this project.
 
 **GitHub Pages (current).** `.github/workflows/pages.yml` uploads `public/` as
 the Pages artifact on every push to `main`, so `scripts/` and the repo config
@@ -246,6 +247,51 @@ unknown to it. The map parses JSON by hand rather than trusting `Content-Type`
 `--content-type application/geo+json` on the `data/` sync anyway if you want
 correct headers.
 
+## Analytics
+
+Google Analytics 4, property `G-K6L1JRMY7K`, wired up in `public/analytics.js`.
+It loads gtag.js and exposes one function, `window.track(name, params)`; the map
+calls it at the points where someone does something worth knowing about. There
+is no consent banner — this is an internal map with a known audience.
+
+Nothing is sent from `localhost`, `127.0.0.1`, a private LAN address or
+`file://`, so `npm run dev` doesn't show up as ranch traffic. Append
+`?ga_debug=1` to any URL to echo every event to the console — locally that is
+the *only* thing that happens, which is how you check the wiring without
+sending a hit.
+
+Everything is fail-soft: `track()` is picked up as a no-op stub if
+`analytics.js` didn't load (ad blocker, offline in the field), so no map feature
+depends on analytics being present.
+
+| Event | Parameters |
+| --- | --- |
+| `map_ready` | `load_ms`, `features`, `layers`, `photos`, `network`, `aerial`, `viewport` — fired when the map is usable, not when the HTML arrived |
+| `map_load_failed` | `message` |
+| `search` | `search_term`, `results` — debounced 1.4 s and skipped under 2 characters, so it records the query someone stopped on, not every keystroke |
+| `search_select` | `search_term`, `feature`, `layer`, `system` |
+| `feature_open` | `feature`, `layer`, `system` — any popup, however it was reached |
+| `stack_open` | `count`, `layers` — the stacked-points carousel |
+| `trace_system` | `feature`, `result`, `length_ft`, `system`, `devices` |
+| `isolate` | `feature`, `result`, `length_ft`, `valves` |
+| `trace_locate` | `feature`, `layer`, `found` — clicking a row in the trace result |
+| `layer_toggle` / `category_toggle` / `overlay_toggle` | name + `state` |
+| `system_filter` | `system` |
+| `basemap_change` | `basemap` |
+| `gallery_open` / `gallery_filter` / `photo_view` / `photo_locate` | `photo`, `photo_title`, `source`, `filter` |
+| `measure_open` / `measure_complete` | `points`, `feet`, `unit` |
+| `pin_tool_open` / `pin_drop` / `coord_copy` | `lat`, `lng`, `zoom` |
+| `map_export` | `result`, `zoom`, `titled`, `date`, `scale`, `north`, `legend` |
+
+`result: "not_connected"` on `trace_system`/`isolate` is worth watching on its
+own: it counts the times someone asked about a run that never made it into the
+derived pipe graph, which is a gap in the network build rather than a user error.
+
+One GA4 chore this can't do for you: custom parameters (`layer`, `system`,
+`feature`, `length_ft`, …) only become reportable dimensions once they're
+registered under **Admin → Custom definitions**. Until then the events count
+correctly but you can't break them down.
+
 ### One external dependency worth knowing about
 
 The header and splash logo is hotlinked from Jonah's Azure blob storage
@@ -261,6 +307,7 @@ public/
   index.html        chrome, styling, panel + lightbox markup
   app.js            layers, symbology, search, system filter, photos
   map_chrome.js     measure / pin / coord + scale readouts / PNG export
+  analytics.js      GA4 loader + the track() the other two call
   layers.json       generated layer catalog
   data/             generated GeoJSON + indexes
   photos/           generated web-sized photos (thumb/ subfolder)

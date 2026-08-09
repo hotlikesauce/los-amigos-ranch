@@ -8,6 +8,10 @@
 (function () {
   "use strict";
 
+  // Analytics, if analytics.js loaded; a stub otherwise, so the controls work
+  // identically when it hasn't.
+  var track = window.track || function () {};
+
   function attachMapChrome(map, opts) {
     opts = opts || {};
 
@@ -107,7 +111,19 @@
         map.doubleClickZoom.enable();
         L.DomUtil.removeClass(el, "measuring");
       }
-      function finish() { deactivateCapture(); if (line) line.setLatLngs(pts); }
+      function finish() {
+        deactivateCapture();
+        if (line) line.setLatLngs(pts);
+        // The completed measurement, not every intermediate click: one point is
+        // a mis-click, two or more is an answer someone wanted.
+        if (pts.length > 1) {
+          track("measure_complete", {
+            points: pts.length,
+            feet: Math.round(totalMeters() * 3.28084),
+            unit: unit
+          });
+        }
+      }
       function clearAll() {
         pts = [];
         if (line) { map.removeLayer(line); line = null; }
@@ -116,6 +132,7 @@
       }
       function open() {
         var pb = document.querySelector(".coordpin-btn.active"); if (pb) pb.click();
+        track("measure_open");
         active = true; panel.style.display = "block"; btn.classList.add("active");
         clearAll(); activateCapture();
       }
@@ -184,6 +201,7 @@
           '</div>';
       }
       function drop(ll) {
+        track("pin_drop", { lat: ll.lat.toFixed(5), lng: ll.lng.toFixed(5), zoom: map.getZoom() });
         if (!marker) marker = L.marker(ll, { icon: PIN_ICON, pane: "emphasis", keyboard: false }).addTo(map);
         else marker.setLatLng(ll);
         marker.unbindPopup();   // drop the previous popup so only ONE is ever open
@@ -196,6 +214,7 @@
       }
       function activate() {
         var mb = document.querySelector(".measure-btn.active"); if (mb) mb.click();
+        track("pin_tool_open");
         btn.classList.add("active");
         map.closePopup();
         map.getContainer().addEventListener("click", domClick, true);
@@ -223,7 +242,7 @@
       // One delegated handler -- popup content is recreated on every drop.
       document.addEventListener("click", function (e) {
         var b = e.target.closest && e.target.closest(".coordpin-both");
-        if (b) { e.preventDefault(); copyText(b.getAttribute("data-v"), b); }
+        if (b) { e.preventDefault(); track("coord_copy"); copyText(b.getAttribute("data-v"), b); }
       });
 
       var Ctl = L.Control.extend({
@@ -411,6 +430,7 @@
     function exportMap() {
       if (btn.classList.contains("busy")) return;
       if (typeof html2canvas !== "function") {
+        track("map_export", { result: "no_library" });
         alert("The export library didn't load, so the map can't be rasterized.");
         return;
       }
@@ -430,8 +450,15 @@
         }
       }).then(function (canvas) {
         composeAndDownload(canvas, o);
+        // The checkbox states go along: they say which parts of the composited
+        // sheet are actually wanted, which is the only way to find out.
+        track("map_export", {
+          result: "ok", zoom: map.getZoom(), titled: !!o.title,
+          date: o.date, scale: o.scale, north: o.north, legend: o.legend
+        });
         btn.classList.remove("busy");
       }).catch(function (e) {
+        track("map_export", { result: "failed", message: (e && e.message) || String(e) });
         console.error("Map export failed", e);
         alert("Couldn't export the map view. Please try again.");
         btn.classList.remove("busy");
